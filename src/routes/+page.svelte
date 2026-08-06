@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Icon } from '$lib/components';
+	import { FilterBar, Icon, StatusBar, TopBar } from '$lib/components';
 	import { app } from '$lib/stores';
 	import type { ContainerInfo, View } from '$lib/types';
 	import { SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
@@ -136,52 +136,9 @@
 {/snippet}
 
 <div class="app">
-	<header class="topbar">
-		<div class="brand">
-			<span class="pulse" aria-hidden="true"></span>
-			<span class="name">portpilot</span>
-		</div>
-		<nav class="views" aria-label="View">
-			<button class:on={app.view === 'tcp'} onclick={() => app.switchView('tcp')}>TCP</button>
-			<button class:on={app.view === 'docker'} onclick={() => app.switchView('docker')}>Docker</button>
-			<button class:on={app.view === 'containers'} onclick={() => app.switchView('containers')}>Containers</button>
-		</nav>
-		<div class="grow"></div>
-		<div class="stat" aria-live="polite">
-			{#if app.view === 'tcp' && app.portsReady}
-				<span class="n">{app.ports.length}</span> ports{#if app.riskyCount > 0}<span class="sep">·</span><span class="risky">{app.riskyCount} risky</span>{/if}
-			{:else if app.view === 'docker' && app.dockerReady && app.dockerAvailable}
-				<span class="n">{app.dports.length}</span> published
-			{:else if app.view === 'containers' && app.containersReady && app.containerAvail}
-				<span class="n">{app.runningContainers}</span> / {app.containers.length} up
-			{/if}
-		</div>
-		{#if app.updatedAt}<time class="clock">{app.updatedAt}</time>{/if}
-		<label class="auto" data-tip="Refresh every 3s">
-			<input type="checkbox" bind:checked={app.autoRefresh} />
-			<span>auto</span>
-		</label>
-		<button class="tbtn" onclick={app.refresh} data-tip="Refresh now">Refresh</button>
-	</header>
+	<TopBar />
 
-	<div class="filterbar">
-		<span class="search"><Icon name="search" /></span>
-		<input
-			bind:this={app.filterEl}
-			bind:value={app.filter}
-			class="filter"
-			type="text"
-			placeholder="Filter by port, process, container…"
-			spellcheck="false"
-			autocomplete="off"
-			aria-label="Filter"
-		/>
-		{#if app.filter}
-			<button class="clear" onclick={() => (app.filter = '')} aria-label="Clear filter"><Icon name="x" /></button>
-		{:else}
-			<kbd class="slash">/</kbd>
-		{/if}
-	</div>
+	<FilterBar />
 
 	{#if app.error}
 		<div class="banner" role="alert">{app.error}</div>
@@ -363,13 +320,7 @@
 		{/if}
 	</main>
 
-	<footer class="statusbar">
-		<span class="hints">
-			<kbd>↑↓</kbd> move <span class="d">·</span> <kbd>↵</kbd> expand <span class="d">·</span>
-			<kbd>x</kbd> kill <span class="d">·</span> <kbd>/</kbd> filter
-		</span>
-		<span class="src"><code>lsof</code> + <code>docker</code></span>
-	</footer>
+	<StatusBar />
 </div>
 
 <style>
@@ -380,180 +331,6 @@
 		max-width: 1040px;
 		margin: 0 auto;
 		border-inline: 1px solid var(--border);
-	}
-
-	/* ---- top bar ---- */
-	.topbar {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		height: 46px;
-		padding: 0 0.85rem;
-		border-bottom: 1px solid var(--border);
-		position: sticky;
-		top: 0;
-		background: color-mix(in srgb, var(--bg) 88%, transparent);
-		backdrop-filter: blur(8px);
-		z-index: 30;
-	}
-	.brand {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-	.pulse {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--ok);
-		box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent);
-		animation: pulse 2.4s ease-out infinite;
-	}
-	@keyframes pulse {
-		0% {
-			box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
-		}
-		70%,
-		100% {
-			box-shadow: 0 0 0 5px transparent;
-		}
-	}
-	.name {
-		font-weight: 600;
-		letter-spacing: -0.01em;
-	}
-	.views {
-		display: flex;
-		gap: 1px;
-		margin-left: 0.35rem;
-	}
-	.views button {
-		border: none;
-		background: none;
-		color: var(--muted);
-		padding: 0.25rem 0.55rem;
-		border-radius: 5px;
-		font-size: 12.5px;
-		font-weight: 500;
-		transition: color 0.12s, background 0.12s;
-	}
-	.views button:hover {
-		color: var(--text);
-		background: var(--hover);
-	}
-	.views button.on {
-		color: var(--text);
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-	}
-	.grow {
-		flex: 1;
-	}
-	.stat {
-		color: var(--muted);
-		font-size: 12.5px;
-		white-space: nowrap;
-	}
-	.stat .n {
-		color: var(--text);
-		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-	}
-	.stat .sep {
-		margin: 0 0.3rem;
-		color: var(--faint);
-	}
-	.stat .risky {
-		color: var(--warn);
-	}
-	.clock {
-		font-family: var(--mono);
-		font-size: 11.5px;
-		color: var(--faint);
-		font-variant-numeric: tabular-nums;
-	}
-	.auto {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.32rem;
-		color: var(--muted);
-		font-size: 12px;
-		user-select: none;
-		cursor: pointer;
-	}
-	.auto input {
-		accent-color: var(--accent);
-		width: 13px;
-		height: 13px;
-	}
-	.tbtn {
-		border: 1px solid var(--border-strong);
-		background: var(--panel);
-		color: var(--text);
-		border-radius: 6px;
-		padding: 0.28rem 0.6rem;
-		font-size: 12px;
-		font-weight: 500;
-		transition: border-color 0.12s, background 0.12s;
-	}
-	.tbtn:hover {
-		border-color: var(--muted);
-		background: var(--hover);
-	}
-
-	/* ---- filter bar ---- */
-	.filterbar {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		height: 38px;
-		padding: 0 0.85rem;
-		border-bottom: 1px solid var(--border);
-		position: sticky;
-		top: 46px;
-		background: var(--bg);
-		z-index: 25;
-	}
-	.search {
-		display: flex;
-		align-items: center;
-		color: var(--faint);
-		flex: none;
-	}
-	.filter {
-		flex: 1;
-		border: none;
-		background: none;
-		outline: none;
-		font-size: 13px;
-		color: var(--text);
-		padding: 0;
-	}
-	.filter::placeholder {
-		color: var(--faint);
-	}
-	.slash {
-		font-family: var(--mono);
-		font-size: 11px;
-		color: var(--faint);
-		border: 1px solid var(--border-strong);
-		border-radius: 4px;
-		padding: 0.05rem 0.32rem;
-		line-height: 1.4;
-	}
-	.clear {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		border: none;
-		background: none;
-		color: var(--faint);
-		border-radius: 4px;
-	}
-	.clear:hover {
-		color: var(--text);
-		background: var(--hover);
 	}
 
 	.banner {
@@ -852,43 +629,6 @@
 		cursor: default;
 	}
 
-	/* ---- tooltip ---- */
-	[data-tip] {
-		position: relative;
-	}
-	[data-tip]::after {
-		content: attr(data-tip);
-		position: absolute;
-		bottom: calc(100% + 6px);
-		right: 0;
-		padding: 0.26rem 0.44rem;
-		border-radius: 5px;
-		background: var(--tooltip-bg);
-		color: var(--tooltip-fg);
-		font-family: var(--sans);
-		font-size: 11px;
-		font-weight: 500;
-		line-height: 1.2;
-		white-space: nowrap;
-		letter-spacing: 0;
-		text-transform: none;
-		opacity: 0;
-		transform: translateY(3px);
-		pointer-events: none;
-		transition: opacity 0.12s ease, transform 0.12s ease;
-		z-index: 40;
-		box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
-	}
-	[data-tip]:hover::after,
-	[data-tip]:focus-visible::after {
-		opacity: 1;
-		transform: translateY(0);
-	}
-	.auto[data-tip]::after,
-	.tbtn[data-tip]::after {
-		right: auto;
-	}
-
 	/* ---- detail ---- */
 	.detail {
 		padding: 0.35rem 0.85rem 0.85rem 3.2rem;
@@ -1007,49 +747,9 @@
 		}
 	}
 
-	/* ---- status bar ---- */
-	.statusbar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		height: 34px;
-		padding: 0 0.85rem;
-		border-top: 1px solid var(--border);
-		position: sticky;
-		bottom: 0;
-		background: var(--bg);
-		font-size: 11.5px;
-		color: var(--faint);
-	}
-	.hints {
-		display: flex;
-		align-items: center;
-		gap: 0.3rem;
-		flex-wrap: wrap;
-	}
-	.hints .d {
-		opacity: 0.5;
-	}
-	.statusbar kbd {
-		font-family: var(--mono);
-		font-size: 10.5px;
-		color: var(--muted);
-		border: 1px solid var(--border-strong);
-		border-radius: 4px;
-		padding: 0.02rem 0.28rem;
-		line-height: 1.5;
-	}
-	.src code {
-		font-family: var(--mono);
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.sk,
-		.chev,
-		.detail,
-		.pulse,
-		[data-tip]::after {
+		.detail {
 			animation: none;
 			transition: none;
 		}
@@ -1078,10 +778,6 @@
 		.cports,
 		.ccol-image,
 		.ccol-status {
-			display: none;
-		}
-		.clock,
-		.stat {
 			display: none;
 		}
 	}
