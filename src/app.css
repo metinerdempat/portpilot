@@ -10,6 +10,8 @@
 	--danger-strong: #a01810;
 	--warn: #9a6a12;
 	--focus: #1a1a1a;
+	--sk-base: #ececeb;
+	--sk-hi: #f6f6f5;
 	--mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 	--sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -27,6 +29,8 @@
 		--danger-strong: #f5978c;
 		--warn: #e0a53a;
 		--focus: #ededed;
+		--sk-base: #1c1c1f;
+		--sk-hi: #2a2a2e;
 	}
 }
 

@@ -238,7 +238,24 @@
 
 	{#if view === 'tcp'}
 		{#if !portsReady}
-			<p class="state">Portlar okunuyor…</p>
+			<div class="table" aria-busy="true" aria-label="Portlar yükleniyor">
+				<div class="row row-tcp head" role="row">
+					<span>Port</span>
+					<span>Süreç</span>
+					<span class="num pid">PID</span>
+					<span class="col-user">Kullanıcı</span>
+					<span></span>
+				</div>
+				{#each [46, 58, 40, 64, 50, 42, 60, 48] as w (w)}
+					<div class="row row-tcp sk-row" aria-hidden="true">
+						<span><span class="sk sk-lg" style="width: 44px"></span></span>
+						<span><span class="sk" style="width: {w}%"></span></span>
+						<span class="num pid"><span class="sk" style="width: 42px"></span></span>
+						<span class="col-user"><span class="sk" style="width: 76px"></span></span>
+						<span class="action"><span class="sk sk-btn"></span></span>
+					</div>
+				{/each}
+			</div>
 		{:else if ports.length === 0}
 			<p class="state">Dinlenen TCP portu yok. Her şey sessiz.</p>
 		{:else}
@@ -294,7 +311,22 @@
 			</div>
 		{/if}
 	{:else if !dockerReady}
-		<p class="state">Docker portları okunuyor…</p>
+		<div class="table" aria-busy="true" aria-label="Docker portları yükleniyor">
+			<div class="row row-docker head" role="row">
+				<span>Port</span>
+				<span>Konteyner</span>
+				<span class="num inner">İç Port</span>
+				<span></span>
+			</div>
+			{#each [54, 44, 60, 48, 52] as w (w)}
+				<div class="row row-docker sk-row" aria-hidden="true">
+					<span><span class="sk sk-lg" style="width: 44px"></span></span>
+					<span><span class="sk" style="width: {w}%"></span></span>
+					<span class="num inner"><span class="sk" style="width: 62px"></span></span>
+					<span class="action"><span class="sk sk-btn"></span></span>
+				</div>
+			{/each}
+		</div>
 	{:else if !dockerAvailable}
 		<div class="notice">
 			<p class="notice-title">Docker kullanılamıyor</p>
@@ -635,6 +667,41 @@
 		align-items: center;
 		justify-content: flex-end;
 		gap: 0.5rem;
+	}
+
+	/* skeleton loading — mirrors the real row layout */
+	.sk-row {
+		pointer-events: none;
+	}
+	.sk {
+		display: inline-block;
+		height: 11px;
+		border-radius: 4px;
+		vertical-align: middle;
+		background: linear-gradient(90deg, var(--sk-base) 25%, var(--sk-hi) 37%, var(--sk-base) 63%);
+		background-size: 400% 100%;
+		animation: sk-shimmer 1.4s ease infinite;
+	}
+	.sk-lg {
+		height: 15px;
+	}
+	.sk-btn {
+		width: 58px;
+		height: 30px;
+		border-radius: 6px;
+	}
+	@keyframes sk-shimmer {
+		0% {
+			background-position: 100% 50%;
+		}
+		100% {
+			background-position: 0 50%;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.sk {
+			animation: none;
+		}
 	}
 
 	/* ---- misc ---- */
