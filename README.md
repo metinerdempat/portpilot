@@ -13,7 +13,8 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 ## Features
 
 - **Two views, one switch** — flip between the machine's **TCP ports** and **Docker's published ports**, rendered identically.
-- **Live list of listening ports** — port, process, PID, user and bind scope (`localhost` vs. exposed to the network).
+- **Dense, monitor-style list** — port, process, live **CPU %**, memory, PID and bind scope (`localhost` vs. exposed to the network), with tabular monospace numerals.
+- **Filter and drive it from the keyboard** — `/` to filter as you type, `↑↓` / `j` `k` to move, `↵` to expand, `x` to kill.
 - **Expand any row** for live technical details — a TCP process shows CPU %, resident memory, uptime, parent PID and its full command line; a container shows CPU, memory, network and disk I/O, and process count. Fetched on demand when you open the row.
 - **Docker port map** — every running container's `host → container` port mapping, with image and scope.
 - **Stop a container** — free a Docker-held port straight from the list with `docker stop` (graceful), behind the same confirm step.

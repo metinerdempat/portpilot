@@ -1,40 +1,59 @@
 :root {
-	--bg: #fbfbfa;
-	--surface: #ffffff;
-	--text: #1a1a1a;
-	--muted: #6b6b6b;
-	--faint: #9a9a9a;
-	--line: #e7e6e3;
-	--line-strong: #d8d7d3;
-	--danger: #b42318;
-	--danger-strong: #a01810;
-	--warn: #9a6a12;
-	--focus: #1a1a1a;
-	--sk-base: #ececeb;
-	--sk-hi: #f6f6f5;
-	--tooltip-bg: #262626;
-	--tooltip-fg: #fafafa;
+	color-scheme: light dark;
+
+	/* neutrals */
+	--bg: #fbfbfc;
+	--panel: #ffffff;
+	--hover: #f4f4f6;
+	--selected: #eef1ff;
+	--border: #ececef;
+	--border-strong: #dededf;
+	--text: #17181c;
+	--muted: #6a6b76;
+	--faint: #9c9ca7;
+
+	/* semantic */
+	--accent: #4c63f0;
+	--danger: #dc4b52;
+	--danger-strong: #c53d44;
+	--warn: #b7791f;
+	--ok: #2ca25f;
+
+	--tooltip-bg: #24252b;
+	--tooltip-fg: #f6f6f7;
+
+	--sk-base: #ececee;
+	--sk-hi: #f6f6f7;
+
 	--mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-	--sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	--sans:
+		-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial,
+		sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
 	:root {
-		--bg: #0d0d0e;
-		--surface: #151517;
-		--text: #ededed;
-		--muted: #9c9c9f;
-		--faint: #6a6a6e;
-		--line: #262629;
-		--line-strong: #34343a;
-		--danger: #f0796b;
-		--danger-strong: #f5978c;
-		--warn: #e0a53a;
-		--focus: #ededed;
-		--sk-base: #1c1c1f;
-		--sk-hi: #2a2a2e;
-		--tooltip-bg: #35353b;
+		--bg: #0a0a0c;
+		--panel: #0f0f12;
+		--hover: #17171b;
+		--selected: #191b2b;
+		--border: #1c1c21;
+		--border-strong: #2a2a31;
+		--text: #e7e7ea;
+		--muted: #93949e;
+		--faint: #5c5c67;
+
+		--accent: #7183ff;
+		--danger: #ef5f68;
+		--danger-strong: #f2757d;
+		--warn: #d6a02a;
+		--ok: #3fbd72;
+
+		--tooltip-bg: #26272d;
 		--tooltip-fg: #f4f4f5;
+
+		--sk-base: #17171b;
+		--sk-hi: #232329;
 	}
 }
 
@@ -46,25 +65,31 @@ html,
 body {
 	margin: 0;
 	padding: 0;
+	height: 100%;
 }
 
 body {
 	background: var(--bg);
 	color: var(--text);
 	font-family: var(--sans);
-	line-height: 1.5;
+	font-size: 13px;
+	line-height: 1.45;
+	letter-spacing: -0.006em;
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
 }
 
-button {
+button,
+input {
 	font-family: inherit;
 	font-size: inherit;
+	color: inherit;
+}
+
+button {
 	cursor: pointer;
 }
 
-:focus-visible {
-	outline: 2px solid var(--focus);
-	outline-offset: 2px;
-	border-radius: 3px;
+::selection {
+	background: color-mix(in srgb, var(--accent) 26%, transparent);
 }

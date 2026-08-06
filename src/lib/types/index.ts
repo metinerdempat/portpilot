@@ -13,6 +13,12 @@ export type PortEntry = {
 	protocol: 'TCP';
 	risk: Risk;
 	riskNote?: string;
+	/** CPU % — attached from a bulk `ps` snapshot when available. */
+	cpu?: number;
+	/** Memory % — attached from the same `ps` snapshot. */
+	mem?: number;
+	/** Resident memory in MB, from the same snapshot. */
+	rssMb?: number;
 };
 
 export type KillOutcome =

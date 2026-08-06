@@ -22,3 +22,10 @@ export async function readErrorMessage(res: Response): Promise<string> {
 export function formatNow(): string {
 	return new Date().toLocaleTimeString('en-GB');
 }
+
+/** Compact memory label, e.g. 47 → "47M", 1536 → "1.5G". */
+export function formatMem(mb: number): string {
+	if (!Number.isFinite(mb)) return '—';
+	if (mb >= 1024) return (mb / 1024).toFixed(1) + 'G';
+	return Math.round(mb) + 'M';
+}

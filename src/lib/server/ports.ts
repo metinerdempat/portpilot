@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PRIVILEGED_PORT_MAX, SYSTEM_COMMANDS } from '$lib/constants';
 import type { KillOutcome, PortEntry, Risk } from '$lib/types';
+import { getProcessStats } from './process';
 
 const run = promisify(execFile);
 
@@ -103,6 +104,17 @@ export async function listPorts(): Promise<PortEntry[]> {
 				});
 				break;
 			}
+		}
+	}
+
+	// Attach a live CPU/memory snapshot so the list can show usage inline.
+	const stats = await getProcessStats(entries.map((e) => e.pid));
+	for (const e of entries) {
+		const s = stats.get(e.pid);
+		if (s) {
+			e.cpu = s.cpu;
+			e.mem = s.mem;
+			e.rssMb = s.rssMb;
 		}
 	}
 

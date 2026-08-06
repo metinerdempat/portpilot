@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import type { DockerPort, PortEntry, View } from '$lib/types';
 	import { REFRESH_MS, SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
-	import { formatNow, readErrorMessage, scopeLabel } from '$lib/utils';
+	import { formatMem, formatNow, readErrorMessage, scopeLabel } from '$lib/utils';
 
 	type Detail = {
 		loading: boolean;
@@ -12,29 +12,48 @@
 
 	let view = $state<View>('tcp');
 
-	// ---- tcp ports ----
 	let ports = $state<PortEntry[]>([]);
 	let portsReady = $state(false);
-	let confirming = $state<number | null>(null); // pid awaiting confirmation
-	let killing = $state<number | null>(null); // pid currently being killed
-	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
+	let confirming = $state<number | null>(null);
+	let killing = $state<number | null>(null);
 
-	// ---- docker ports ----
 	let dports = $state<DockerPort[]>([]);
 	let dockerReady = $state(false);
 	let dockerAvailable = $state(true);
 	let dockerReason = $state<string | null>(null);
-	let dconfirming = $state<string | null>(null); // container id awaiting confirmation
-	let stopping = $state<string | null>(null); // container id currently stopping
+	let dconfirming = $state<string | null>(null);
+	let stopping = $state<string | null>(null);
 
-	// ---- expand / detail ----
 	let expanded = $state<string[]>([]);
 	let details = $state<Record<string, Detail>>({});
 
-	// ---- shared ----
 	let error = $state<string | null>(null);
 	let autoRefresh = $state(false);
 	let updatedAt = $state('');
+
+	// ---- filter + keyboard ----
+	let filter = $state('');
+	let filterEl = $state<HTMLInputElement | null>(null);
+
+	let visiblePorts = $derived(
+		filter.trim() ? ports.filter((p) => matchPort(p, filter.toLowerCase())) : ports
+	);
+	let visibleDports = $derived(
+		filter.trim() ? dports.filter((d) => matchDocker(d, filter.toLowerCase())) : dports
+	);
+	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
+
+	function matchPort(p: PortEntry, q: string) {
+		return String(p.port).includes(q) || p.command.toLowerCase().includes(q) || p.user.toLowerCase().includes(q);
+	}
+	function matchDocker(d: DockerPort, q: string) {
+		return (
+			String(d.hostPort).includes(q) ||
+			String(d.containerPort).includes(q) ||
+			d.container.toLowerCase().includes(q) ||
+			d.image.toLowerCase().includes(q)
+		);
+	}
 
 	async function loadPorts() {
 		try {
@@ -117,7 +136,6 @@
 		}
 	}
 
-	// ---- action helpers, shared by both views ----
 	function beginAction(kind: View, id: number | string) {
 		if (kind === 'tcp') confirming = id as number;
 		else dconfirming = id as string;
@@ -132,6 +150,11 @@
 	}
 
 	// ---- expand / detail ----
+	function keyFor(kind: View, item: PortEntry | DockerPort): string {
+		return kind === 'tcp'
+			? 'tcp:' + (item as PortEntry).pid + ':' + (item as PortEntry).port
+			: 'docker:' + (item as DockerPort).containerId + ':' + (item as DockerPort).hostPort + ':' + (item as DockerPort).protocol;
+	}
 	function isOpen(key: string) {
 		return expanded.includes(key);
 	}
@@ -160,27 +183,57 @@
 			expanded = expanded.filter((k) => k !== key);
 		} else {
 			expanded = [...expanded, key];
-			loadDetail(key, kind, id); // fresh snapshot each time it opens
+			loadDetail(key, kind, id);
 		}
 	}
 
-	// Row click is a mouse convenience; clicks on inner buttons are theirs.
-	function onRowClick(e: MouseEvent, key: string, kind: View, id: number | string) {
+	function rowClick(e: MouseEvent, key: string, kind: View, id: number | string) {
 		if ((e.target as HTMLElement).closest('button')) return;
 		toggleExpand(key, kind, id);
 	}
 
-	function onRowKey(e: KeyboardEvent, key: string, kind: View, id: number | string) {
-		if (e.target !== e.currentTarget) return; // ignore keys bubbling up from action buttons
+	function focusRow(i: number) {
+		(document.querySelector(`[data-idx="${i}"]`) as HTMLElement | null)?.focus();
+	}
+
+	// Per-row keys: ↑↓ / j k move focus, ↵ expands, x kills — when the row itself
+	// (not an inner button) holds focus.
+	function rowKey(e: KeyboardEvent, i: number, key: string, kind: View, id: number | string, locked: boolean) {
+		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			toggleExpand(key, kind, id);
+		} else if (e.key === 'x') {
+			if (!locked) {
+				e.preventDefault();
+				beginAction(kind, id);
+			}
+		} else if (e.key === 'ArrowDown' || e.key === 'j') {
+			e.preventDefault();
+			focusRow(i + 1);
+		} else if (e.key === 'ArrowUp' || e.key === 'k') {
+			e.preventDefault();
+			focusRow(i - 1);
+		}
+	}
+
+	function onGlobalKey(e: KeyboardEvent) {
+		const t = e.target as HTMLElement;
+		const inInput = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
+		if (e.key === '/' && !inInput) {
+			e.preventDefault();
+			filterEl?.focus();
+		} else if (e.key === 'Escape') {
+			if (inInput) (t as HTMLInputElement).blur();
+			else if (confirming !== null || dconfirming !== null) {
+				confirming = null;
+				dconfirming = null;
+			} else if (filter) filter = '';
 		}
 	}
 
 	onMount(refresh);
 
-	// Poll the active view while auto-refresh is on.
 	$effect(() => {
 		if (!autoRefresh) return;
 		const id = setInterval(refresh, REFRESH_MS);
@@ -188,692 +241,710 @@
 	});
 </script>
 
+<svelte:window onkeydown={onGlobalKey} />
+
+<svelte:head>
+	<title>portpilot — ports & docker</title>
+</svelte:head>
+
 {#snippet chevron()}
-	<svg class="ic-chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+	<svg class="chev" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 		<path d="M9 5l7 7-7 7" />
 	</svg>
 {/snippet}
 
 {#snippet powerIcon()}
-	<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-		<path d="M12 4v8" />
-		<path d="M7.6 7.2a7 7 0 1 0 8.8 0" />
+	<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+		<path d="M12 4v8" /><path d="M7.6 7.2a7 7 0 1 0 8.8 0" />
 	</svg>
 {/snippet}
 
 {#snippet stopIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+	<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
 		<rect x="6" y="6" width="12" height="12" rx="2.5" />
 	</svg>
 {/snippet}
 
+{#snippet zapIcon()}
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+		<path d="M13 2L4 14h6l-1 8 9-12h-6z" />
+	</svg>
+{/snippet}
+
 {#snippet xIcon()}
-	<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
 		<path d="M6 6l12 12M18 6L6 18" />
 	</svg>
 {/snippet}
 
 {#snippet lockIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-		<rect x="5" y="11" width="14" height="9" rx="2" />
-		<path d="M8 11V8a4 4 0 0 1 8 0v3" />
+	<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
 	</svg>
 {/snippet}
 
 {#snippet actionCell(a: { kind: View; id: number | string; locked: boolean })}
 	{@const active = a.kind === 'tcp' ? confirming === a.id : dconfirming === a.id}
 	{@const busy = a.kind === 'tcp' ? killing === a.id : stopping === a.id}
-	<span class="action" role="cell">
+	<span class="cell actions">
 		{#if a.locked}
-			<span
-				class="act act-locked"
-				role="img"
-				aria-label="Protected system process"
-				data-tooltip="Protected system process — can’t be killed here"
-			>
+			<span class="icon-btn locked" role="img" aria-label="Protected system process" data-tip="Protected — can’t kill">
 				{@render lockIcon()}
 			</span>
 		{:else if active}
 			<span class="confirm">
-				<button class="act-yes" onclick={() => confirmAction(a.kind, a.id)} disabled={busy}>
+				<button class="kill-btn" onclick={() => confirmAction(a.kind, a.id)} disabled={busy}>
 					{busy ? '…' : a.kind === 'tcp' ? 'Kill' : 'Stop'}
 				</button>
 				{#if a.kind === 'tcp'}
-					<button
-						class="act-force"
-						onclick={() => kill(a.id as number, true)}
-						disabled={busy}
-						data-tooltip="Force kill — SIGKILL">force</button
-					>
+					<button class="icon-btn force" onclick={() => kill(a.id as number, true)} disabled={busy} data-tip="Force · SIGKILL" aria-label="Force kill">
+						{@render zapIcon()}
+					</button>
 				{/if}
-				<button
-					class="act-cancel"
-					onclick={() => cancelAction(a.kind)}
-					disabled={busy}
-					aria-label="Cancel"
-					data-tooltip="Cancel"
-				>
+				<button class="icon-btn" onclick={() => cancelAction(a.kind)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
 					{@render xIcon()}
 				</button>
 			</span>
 		{:else}
-			<button
-				class="act act-danger"
-				onclick={() => beginAction(a.kind, a.id)}
-				aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}
-				data-tooltip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}
-			>
+			<button class="icon-btn danger reveal" onclick={() => beginAction(a.kind, a.id)} data-tip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'} aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}>
 				{#if a.kind === 'tcp'}{@render powerIcon()}{:else}{@render stopIcon()}{/if}
 			</button>
 		{/if}
 	</span>
 {/snippet}
 
-{#snippet detail(key: string, kind: View)}
+{#snippet detailPanel(key: string, kind: View)}
 	{@const d = details[key]}
 	<div class="detail">
 		{#if !d || d.loading}
-			<dl class="facts">
-				{#each [64, 88, 72, 96] as w (w)}
-					<div>
-						<dt><span class="sk" style="width: 42px; height: 8px"></span></dt>
-						<dd><span class="sk" style="width: {w}px; height: 9px"></span></dd>
-					</div>
+			<div class="facts">
+				{#each [70, 54, 88, 60] as w (w)}
+					<div class="fact"><span class="sk" style="width: 34px; height: 8px"></span><span class="sk" style="width: {w}px; height: 9px"></span></div>
 				{/each}
-			</dl>
+			</div>
 		{:else if d.error}
 			<p class="detail-error">{d.error}</p>
 		{:else if kind === 'tcp' && d.data}
 			{@const x = d.data}
-			<dl class="facts">
-				<div><dt>CPU</dt><dd>{x.cpu}%</dd></div>
-				<div><dt>Memory</dt><dd>{x.rssMb} MB · {x.mem}%</dd></div>
-				<div><dt>Uptime</dt><dd>{x.uptime}</dd></div>
-				<div><dt>Parent</dt><dd>PID {x.ppid}</dd></div>
-			</dl>
-			<div class="cmdline">
-				<span>Full command</span>
-				<code>{x.command}</code>
+			<div class="facts">
+				<div class="fact"><dt>Memory</dt><dd>{x.rssMb} MB · {x.mem}%</dd></div>
+				<div class="fact"><dt>Uptime</dt><dd>{x.uptime}</dd></div>
+				<div class="fact"><dt>Parent</dt><dd>PID {x.ppid}</dd></div>
 			</div>
+			<div class="cmdline"><dt>Command</dt><code>{x.command}</code></div>
 		{:else if d.data}
 			{@const x = d.data}
-			<dl class="facts">
-				<div><dt>CPU</dt><dd>{x.cpu}</dd></div>
-				<div><dt>Memory</dt><dd>{x.mem} · {x.memPerc}</dd></div>
-				<div><dt>Network I/O</dt><dd>{x.net}</dd></div>
-				<div><dt>Disk I/O</dt><dd>{x.block}</dd></div>
-				<div><dt>Processes</dt><dd>{x.pids}</dd></div>
-			</dl>
+			<div class="facts">
+				<div class="fact"><dt>CPU</dt><dd>{x.cpu}</dd></div>
+				<div class="fact"><dt>Memory</dt><dd>{x.mem} · {x.memPerc}</dd></div>
+				<div class="fact"><dt>Network I/O</dt><dd>{x.net}</dd></div>
+				<div class="fact"><dt>Disk I/O</dt><dd>{x.block}</dd></div>
+				<div class="fact"><dt>Processes</dt><dd>{x.pids}</dd></div>
+			</div>
 		{/if}
 	</div>
 {/snippet}
 
-<svelte:head>
-	<title>portpilot — ports & docker</title>
-</svelte:head>
-
-<main>
-	<header>
-		<div class="wordmark">
-			<span class="dot" aria-hidden="true"></span>
-			<h1>portpilot</h1>
+<div class="app">
+	<header class="topbar">
+		<div class="brand">
+			<span class="pulse" aria-hidden="true"></span>
+			<span class="name">portpilot</span>
 		</div>
-		<p class="sub">
-			The TCP ports your machine is listening on, plus the ports your Docker containers publish — all
-			in one place.
-		</p>
-
-		<div class="tabs" role="tablist" aria-label="View">
-			<button
-				role="tab"
-				aria-selected={view === 'tcp'}
-				class:active={view === 'tcp'}
-				onclick={() => switchView('tcp')}
-			>
-				TCP Ports
-			</button>
-			<button
-				role="tab"
-				aria-selected={view === 'docker'}
-				class:active={view === 'docker'}
-				onclick={() => switchView('docker')}
-			>
-				Docker Ports
-			</button>
+		<nav class="views" aria-label="View">
+			<button class:on={view === 'tcp'} onclick={() => switchView('tcp')}>TCP</button>
+			<button class:on={view === 'docker'} onclick={() => switchView('docker')}>Docker</button>
+		</nav>
+		<div class="grow"></div>
+		<div class="stat" aria-live="polite">
+			{#if view === 'tcp' && portsReady}
+				<span class="n">{ports.length}</span> ports{#if riskyCount > 0}<span class="sep">·</span><span class="risky">{riskyCount} risky</span>{/if}
+			{:else if view === 'docker' && dockerReady && dockerAvailable}
+				<span class="n">{dports.length}</span> published
+			{/if}
 		</div>
-
-		<div class="toolbar">
-			<div class="count">
-				{#if view === 'tcp' && portsReady}
-					<strong>{ports.length}</strong> active ports
-					{#if riskyCount > 0}<span class="risky-note"> · {riskyCount} risky</span>{/if}
-				{:else if view === 'docker' && dockerReady && dockerAvailable}
-					<strong>{dports.length}</strong> published
-				{/if}
-				{#if updatedAt}<span class="stamp">· {updatedAt}</span>{/if}
-			</div>
-			<div class="controls">
-				<label class="toggle">
-					<input type="checkbox" bind:checked={autoRefresh} />
-					Auto-refresh
-				</label>
-				<button class="refresh" onclick={refresh}>Refresh</button>
-			</div>
-		</div>
+		{#if updatedAt}<time class="clock">{updatedAt}</time>{/if}
+		<label class="auto" data-tip="Refresh every 3s">
+			<input type="checkbox" bind:checked={autoRefresh} />
+			<span>auto</span>
+		</label>
+		<button class="tbtn" onclick={refresh} data-tip="Refresh now">Refresh</button>
 	</header>
+
+	<div class="filterbar">
+		<svg class="search" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+			<circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" />
+		</svg>
+		<input
+			bind:this={filterEl}
+			bind:value={filter}
+			class="filter"
+			type="text"
+			placeholder="Filter by port, process, container…"
+			spellcheck="false"
+			autocomplete="off"
+			aria-label="Filter"
+		/>
+		{#if filter}
+			<button class="clear" onclick={() => (filter = '')} aria-label="Clear filter">{@render xIcon()}</button>
+		{:else}
+			<kbd class="slash">/</kbd>
+		{/if}
+	</div>
 
 	{#if error}
 		<div class="banner" role="alert">{error}</div>
 	{/if}
 
-	{#if view === 'tcp'}
-		{#if !portsReady}
-			<div class="table" aria-busy="true" aria-label="Loading ports">
-				<div class="row row-tcp head" role="row">
-					<span></span>
-					<span>Port</span>
-					<span>Process</span>
-					<span class="num pid">PID</span>
-					<span class="col-user">User</span>
-					<span></span>
-				</div>
+	<main class="list">
+		{#if view === 'tcp'}
+			<div class="row rhead" role="row">
+				<span class="cell"></span>
+				<span class="cell">Port</span>
+				<span class="cell">Process</span>
+				<span class="cell r">CPU</span>
+				<span class="cell r">Mem</span>
+				<span class="cell r">PID</span>
+				<span class="cell"></span>
+				<span class="cell"></span>
+			</div>
+
+			{#if !portsReady}
 				{#each SKELETON_TCP_WIDTHS as w (w)}
-					<div class="row row-tcp sk-row" aria-hidden="true">
-						<span></span>
-						<span><span class="sk sk-lg" style="width: 40px"></span></span>
-						<span><span class="sk" style="width: {w}%"></span></span>
-						<span class="num pid"><span class="sk" style="width: 42px"></span></span>
-						<span class="col-user"><span class="sk" style="width: 74px"></span></span>
-						<span class="action"><span class="sk sk-act"></span></span>
+					<div class="row rtcp sk-row" aria-hidden="true">
+						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
+						<span class="cell"><span class="sk" style="width: 34px"></span></span>
+						<span class="cell"><span class="sk" style="width: {w}%"></span></span>
+						<span class="cell r"><span class="sk" style="width: 28px"></span></span>
+						<span class="cell r"><span class="sk" style="width: 28px"></span></span>
+						<span class="cell r"><span class="sk" style="width: 40px"></span></span>
+						<span class="cell"></span>
+						<span class="cell"></span>
 					</div>
 				{/each}
-			</div>
-		{:else if ports.length === 0}
-			<p class="state">No listening TCP ports. All quiet.</p>
-		{:else}
-			<div class="table" role="table" aria-label="Active TCP ports">
-				<div class="row row-tcp head" role="row">
-					<span></span>
-					<span>Port</span>
-					<span>Process</span>
-					<span class="num pid">PID</span>
-					<span class="col-user">User</span>
-					<span></span>
-				</div>
-
-				{#each ports as p (p.pid + ':' + p.port)}
-					{@const key = 'tcp:' + p.pid + ':' + p.port}
+			{:else if visiblePorts.length === 0}
+				<p class="empty">{filter ? 'No ports match the filter.' : 'No listening TCP ports. All quiet.'}</p>
+			{:else}
+				{#each visiblePorts as p, i (p.pid + ':' + p.port)}
+					{@const key = keyFor('tcp', p)}
 					<div
-						class="row row-tcp"
+						class="row rtcp"
 						class:open={isOpen(key)}
 						data-risk={p.risk}
+						data-idx={i}
 						role="row"
 						tabindex="0"
-						aria-expanded={isOpen(key)}
-						onclick={(e) => onRowClick(e, key, 'tcp', p.pid)}
-						onkeydown={(e) => onRowKey(e, key, 'tcp', p.pid)}
+						onclick={(e) => rowClick(e, key, 'tcp', p.pid)}
+						onkeydown={(e) => rowKey(e, i, key, 'tcp', p.pid, p.risk === 'system')}
 					>
-						<span class="chev-cell" role="cell" aria-hidden="true">
-							{@render chevron()}
-						</span>
-
-						<span class="port" role="cell">{p.port}</span>
-
-						<span class="proc" role="cell">
+						<span class="cell"><span class="dot" data-risk={p.risk} title={p.riskNote}></span></span>
+						<span class="cell port">{p.port}</span>
+						<span class="cell proc">
 							<span class="cmd">{p.command || '—'}</span>
-							<span class="addr">{scopeLabel(p.address)}</span>
-							{#if p.risk !== 'safe'}
-								<span class="risk-tag risk-{p.risk}" title={p.riskNote}>
-									{p.risk === 'system' ? 'system' : 'caution'}
-								</span>
-							{/if}
+							<span class="scope">{scopeLabel(p.address)}</span>
+							{#if p.risk !== 'safe'}<span class="tag t-{p.risk}">{p.risk}</span>{/if}
 						</span>
-
-						<span class="num pid" role="cell">{p.pid}</span>
-						<span class="col-user user" role="cell">{p.user}</span>
-
+						<span class="cell r metric">{p.cpu != null ? p.cpu + '%' : '·'}</span>
+						<span class="cell r metric">{p.rssMb != null ? formatMem(p.rssMb) : '·'}</span>
+						<span class="cell r pid">{p.pid}</span>
 						{@render actionCell({ kind: 'tcp', id: p.pid, locked: p.risk === 'system' })}
+						<span class="cell chevcell">{@render chevron()}</span>
 					</div>
-					{#if isOpen(key)}
-						{@render detail(key, 'tcp')}
-					{/if}
+					{#if isOpen(key)}{@render detailPanel(key, 'tcp')}{/if}
 				{/each}
-			</div>
-		{/if}
-	{:else if !dockerReady}
-		<div class="table" aria-busy="true" aria-label="Loading Docker ports">
-			<div class="row row-docker head" role="row">
-				<span></span>
-				<span>Port</span>
-				<span>Container</span>
-				<span class="num inner">Internal</span>
-				<span></span>
-			</div>
-			{#each SKELETON_DOCKER_WIDTHS as w (w)}
-				<div class="row row-docker sk-row" aria-hidden="true">
-					<span></span>
-					<span><span class="sk sk-lg" style="width: 40px"></span></span>
-					<span><span class="sk" style="width: {w}%"></span></span>
-					<span class="num inner"><span class="sk" style="width: 60px"></span></span>
-					<span class="action"><span class="sk sk-act"></span></span>
-				</div>
-			{/each}
-		</div>
-	{:else if !dockerAvailable}
-		<div class="notice">
-			<p class="notice-title">Docker unavailable</p>
-			<p class="notice-body">{dockerReason ?? 'Could not reach Docker.'}</p>
-			<p class="notice-hint">
-				Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.
-			</p>
-		</div>
-	{:else if dports.length === 0}
-		<p class="state">No published Docker ports. No running containers, or none publish a port.</p>
-	{:else}
-		<div class="table" role="table" aria-label="Docker ports">
-			<div class="row row-docker head" role="row">
-				<span></span>
-				<span>Port</span>
-				<span>Container</span>
-				<span class="num inner">Internal</span>
-				<span></span>
-			</div>
-
-			{#each dports as d (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
-				{@const key = 'docker:' + d.containerId + ':' + d.hostPort + ':' + d.protocol}
-				<div
-					class="row row-docker"
-					class:open={isOpen(key)}
-					role="row"
-					tabindex="0"
-					aria-expanded={isOpen(key)}
-					onclick={(e) => onRowClick(e, key, 'docker', d.containerId)}
-					onkeydown={(e) => onRowKey(e, key, 'docker', d.containerId)}
-				>
-					<span class="chev-cell" role="cell" aria-hidden="true">
-						{@render chevron()}
-					</span>
-
-					<span class="port" role="cell">{d.hostPort}</span>
-
-					<span class="proc" role="cell">
-						<span class="cmd">{d.container}</span>
-						<span class="hint">{d.image}</span>
-						<span class="addr">{scopeLabel(d.address)}</span>
-					</span>
-
-					<span class="num inner" role="cell">→ {d.containerPort}/{d.protocol}</span>
-
-					{@render actionCell({ kind: 'docker', id: d.containerId, locked: false })}
-				</div>
-				{#if isOpen(key)}
-					{@render detail(key, 'docker')}
-				{/if}
-			{/each}
-		</div>
-	{/if}
-
-	<footer>
-		<span>Runs locally · <code>lsof</code> + <code>docker</code></span>
-		{#if view === 'tcp'}
-			<span>Click a row → resources &amp; details · <code>⏻</code> = kill</span>
+			{/if}
 		{:else}
-			<span>Click a row → stats · <code>◼</code> = stop container</span>
+			<div class="row rhead rdocker" role="row">
+				<span class="cell"></span>
+				<span class="cell">Port</span>
+				<span class="cell">Container</span>
+				<span class="cell dcol-internal">Internal</span>
+				<span class="cell"></span>
+				<span class="cell"></span>
+			</div>
+
+			{#if !dockerReady}
+				{#each SKELETON_DOCKER_WIDTHS as w (w)}
+					<div class="row rdocker sk-row" aria-hidden="true">
+						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
+						<span class="cell"><span class="sk" style="width: 34px"></span></span>
+						<span class="cell"><span class="sk" style="width: {w}%"></span></span>
+						<span class="cell"><span class="sk" style="width: 64px"></span></span>
+						<span class="cell"></span>
+						<span class="cell"></span>
+					</div>
+				{/each}
+			{:else if !dockerAvailable}
+				<div class="notice">
+					<p class="notice-t">Docker unavailable</p>
+					<p class="notice-b">{dockerReason ?? 'Could not reach Docker.'}</p>
+					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.</p>
+				</div>
+			{:else if visibleDports.length === 0}
+				<p class="empty">{filter ? 'No ports match the filter.' : 'No published Docker ports.'}</p>
+			{:else}
+				{#each visibleDports as d, i (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
+					{@const key = keyFor('docker', d)}
+					<div
+						class="row rdocker"
+						class:open={isOpen(key)}
+						data-idx={i}
+						role="row"
+						tabindex="0"
+						onclick={(e) => rowClick(e, key, 'docker', d.containerId)}
+						onkeydown={(e) => rowKey(e, i, key, 'docker', d.containerId, false)}
+					>
+						<span class="cell"><span class="dot" data-risk="running"></span></span>
+						<span class="cell port">{d.hostPort}</span>
+						<span class="cell proc">
+							<span class="cmd">{d.container}</span>
+							<span class="scope">{d.image}</span>
+							<span class="scope dim">{scopeLabel(d.address)}</span>
+						</span>
+						<span class="cell map">→ {d.containerPort}/{d.protocol}</span>
+						{@render actionCell({ kind: 'docker', id: d.containerId, locked: false })}
+						<span class="cell chevcell">{@render chevron()}</span>
+					</div>
+					{#if isOpen(key)}{@render detailPanel(key, 'docker')}{/if}
+				{/each}
+			{/if}
 		{/if}
+	</main>
+
+	<footer class="statusbar">
+		<span class="hints">
+			<kbd>↑↓</kbd> move <span class="d">·</span> <kbd>↵</kbd> expand <span class="d">·</span>
+			<kbd>x</kbd> kill <span class="d">·</span> <kbd>/</kbd> filter
+		</span>
+		<span class="src"><code>lsof</code> + <code>docker</code></span>
 	</footer>
-</main>
+</div>
 
 <style>
-	main {
-		max-width: 820px;
+	.app {
+		display: flex;
+		flex-direction: column;
+		min-height: 100vh;
+		max-width: 1040px;
 		margin: 0 auto;
-		padding: clamp(2rem, 6vw, 5rem) 1.25rem 4rem;
+		border-inline: 1px solid var(--border);
 	}
 
-	/* ---- header ---- */
-	.wordmark {
+	/* ---- top bar ---- */
+	.topbar {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
+		gap: 0.75rem;
+		height: 46px;
+		padding: 0 0.85rem;
+		border-bottom: 1px solid var(--border);
+		position: sticky;
+		top: 0;
+		background: color-mix(in srgb, var(--bg) 88%, transparent);
+		backdrop-filter: blur(8px);
+		z-index: 30;
 	}
-	.dot {
-		width: 9px;
-		height: 9px;
+	.brand {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.pulse {
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		background: #2fbf71;
-		box-shadow: 0 0 0 3px color-mix(in srgb, #2fbf71 22%, transparent);
+		background: var(--ok);
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent);
+		animation: pulse 2.4s ease-out infinite;
 	}
-	h1 {
-		margin: 0;
-		font-size: 1.6rem;
-		font-weight: 640;
-		letter-spacing: -0.02em;
+	@keyframes pulse {
+		0% {
+			box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+		}
+		70%,
+		100% {
+			box-shadow: 0 0 0 5px transparent;
+		}
 	}
-	.sub {
-		margin: 0.7rem 0 0;
-		color: var(--muted);
-		max-width: 54ch;
+	.name {
+		font-weight: 600;
+		letter-spacing: -0.01em;
 	}
-
-	.tabs {
-		display: inline-flex;
-		gap: 2px;
-		margin-top: 1.5rem;
-		padding: 3px;
-		border: 1px solid var(--line);
-		border-radius: 9px;
-		background: var(--surface);
+	.views {
+		display: flex;
+		gap: 1px;
+		margin-left: 0.35rem;
 	}
-	.tabs button {
+	.views button {
 		border: none;
 		background: none;
-		padding: 0.38rem 0.95rem;
-		border-radius: 6px;
 		color: var(--muted);
-		font-size: 0.9rem;
-		transition: background 0.15s, color 0.15s;
+		padding: 0.25rem 0.55rem;
+		border-radius: 5px;
+		font-size: 12.5px;
+		font-weight: 500;
+		transition: color 0.12s, background 0.12s;
 	}
-	.tabs button:hover {
+	.views button:hover {
 		color: var(--text);
+		background: var(--hover);
 	}
-	.tabs button.active {
-		background: color-mix(in srgb, var(--text) 8%, transparent);
+	.views button.on {
 		color: var(--text);
-		font-weight: 540;
+		background: color-mix(in srgb, var(--accent) 15%, transparent);
 	}
-
-	.toolbar {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-top: 1.25rem;
-		padding-bottom: 0.85rem;
-		border-bottom: 1px solid var(--line-strong);
-		flex-wrap: wrap;
+	.grow {
+		flex: 1;
 	}
-	.count {
+	.stat {
 		color: var(--muted);
-		font-size: 0.9rem;
+		font-size: 12.5px;
+		white-space: nowrap;
 	}
-	.count strong {
+	.stat .n {
 		color: var(--text);
+		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}
-	.stamp {
-		font-family: var(--mono);
-		font-size: 0.8rem;
+	.stat .sep {
+		margin: 0 0.3rem;
 		color: var(--faint);
 	}
-	.risky-note {
+	.stat .risky {
 		color: var(--warn);
 	}
-	.controls {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
+	.clock {
+		font-family: var(--mono);
+		font-size: 11.5px;
+		color: var(--faint);
+		font-variant-numeric: tabular-nums;
 	}
-	.toggle {
+	.auto {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		font-size: 0.9rem;
+		gap: 0.32rem;
 		color: var(--muted);
+		font-size: 12px;
 		user-select: none;
+		cursor: pointer;
 	}
-	.toggle input {
-		accent-color: var(--text);
+	.auto input {
+		accent-color: var(--accent);
+		width: 13px;
+		height: 13px;
 	}
-	.refresh {
-		background: var(--surface);
+	.tbtn {
+		border: 1px solid var(--border-strong);
+		background: var(--panel);
 		color: var(--text);
-		border: 1px solid var(--line-strong);
 		border-radius: 6px;
-		padding: 0.4rem 0.85rem;
-		font-size: 0.875rem;
-		transition: border-color 0.15s;
+		padding: 0.28rem 0.6rem;
+		font-size: 12px;
+		font-weight: 500;
+		transition: border-color 0.12s, background 0.12s;
 	}
-	.refresh:hover {
-		border-color: var(--text);
+	.tbtn:hover {
+		border-color: var(--muted);
+		background: var(--hover);
 	}
 
-	/* ---- table ---- */
-	.table {
-		margin-top: 0.25rem;
+	/* ---- filter bar ---- */
+	.filterbar {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		height: 38px;
+		padding: 0 0.85rem;
+		border-bottom: 1px solid var(--border);
+		position: sticky;
+		top: 46px;
+		background: var(--bg);
+		z-index: 25;
+	}
+	.search {
+		color: var(--faint);
+		flex: none;
+	}
+	.filter {
+		flex: 1;
+		border: none;
+		background: none;
+		outline: none;
+		font-size: 13px;
+		color: var(--text);
+		padding: 0;
+	}
+	.filter::placeholder {
+		color: var(--faint);
+	}
+	.slash {
+		font-family: var(--mono);
+		font-size: 11px;
+		color: var(--faint);
+		border: 1px solid var(--border-strong);
+		border-radius: 4px;
+		padding: 0.05rem 0.32rem;
+		line-height: 1.4;
+	}
+	.clear {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		border: none;
+		background: none;
+		color: var(--faint);
+		border-radius: 4px;
+	}
+	.clear:hover {
+		color: var(--text);
+		background: var(--hover);
+	}
+
+	.banner {
+		margin: 0.7rem 0.85rem 0;
+		padding: 0.55rem 0.75rem;
+		border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+		border-radius: 6px;
+		color: var(--danger);
+		font-size: 12.5px;
+		background: color-mix(in srgb, var(--danger) 8%, transparent);
+	}
+
+	/* ---- list ---- */
+	.list {
+		flex: 1;
+		padding-bottom: 0.5rem;
 	}
 	.row {
 		display: grid;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.8rem 0.25rem;
-		border-bottom: 1px solid var(--line);
+		gap: 0.7rem;
+		padding: 0 0.85rem;
+		min-height: 40px;
 	}
-	.row-tcp {
-		grid-template-columns: 24px 62px minmax(0, 1fr) 66px 88px 150px;
+	.rtcp,
+	.rhead:not(.rdocker) {
+		grid-template-columns: 14px 54px minmax(0, 1fr) 50px 52px 62px 96px 20px;
 	}
-	.row-docker {
-		grid-template-columns: 24px 62px minmax(0, 1fr) 116px 128px;
+	.rdocker {
+		grid-template-columns: 14px 54px minmax(0, 1fr) 118px 96px 20px;
 	}
-	.row.head {
-		padding-top: 0.75rem;
-		padding-bottom: 0.75rem;
-		border-bottom: 1px solid var(--line-strong);
-		font-size: 0.72rem;
+	.rhead {
+		min-height: 32px;
+		border-bottom: 1px solid var(--border);
+		position: sticky;
+		top: 84px;
+		background: var(--bg);
+		z-index: 20;
+		font-size: 10.5px;
 		text-transform: uppercase;
-		letter-spacing: 0.09em;
+		letter-spacing: 0.07em;
 		color: var(--faint);
+		font-weight: 500;
 	}
-	.row:not(.head):not(.sk-row) {
+	.cell {
+		min-width: 0;
+	}
+	.cell.r {
+		text-align: right;
+	}
+
+	.row:not(.rhead):not(.sk-row) {
 		cursor: pointer;
 	}
-	.row:not(.head):not(.sk-row):hover {
-		background: color-mix(in srgb, var(--text) 3.5%, transparent);
+	.row:not(.rhead):not(.sk-row):hover {
+		background: var(--hover);
+	}
+	.row:not(.rhead):focus-visible {
+		background: var(--selected);
+		box-shadow: inset 2px 0 0 var(--accent);
+		outline: none;
 	}
 	.row.open {
-		border-bottom-color: transparent;
-		background: color-mix(in srgb, var(--text) 3.5%, transparent);
-	}
-	.row:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
-		border-radius: 4px;
+		background: var(--hover);
 	}
 
-	/* bigger risk accent bar */
-	.row[data-risk='system'] {
-		box-shadow: inset 4px 0 0 var(--danger);
+	.dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--ok);
 	}
-	.row[data-risk='caution'] {
-		box-shadow: inset 4px 0 0 var(--warn);
+	.dot[data-risk='caution'] {
+		background: var(--warn);
 	}
-
-	/* chevron */
-	.chev-cell {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--faint);
-		transition: color 0.15s;
+	.dot[data-risk='system'] {
+		background: var(--danger);
 	}
-	.row:hover .chev-cell,
-	.row:focus-visible .chev-cell {
-		color: var(--muted);
-	}
-	.ic-chev {
-		transition: transform 0.18s ease;
-	}
-	.row.open .ic-chev {
-		transform: rotate(90deg);
+	.dot[data-risk='running'] {
+		background: var(--ok);
 	}
 
 	.port {
 		font-family: var(--mono);
-		font-size: 1.05rem;
+		font-size: 13px;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+		letter-spacing: -0.02em;
 	}
-	.num {
-		font-family: var(--mono);
-		font-variant-numeric: tabular-nums;
-		text-align: right;
-	}
-	.pid {
-		color: var(--muted);
-		font-size: 0.9rem;
-	}
-	.inner {
-		color: var(--muted);
-		font-size: 0.85rem;
-	}
-
 	.proc {
 		display: flex;
 		align-items: baseline;
-		gap: 0.55rem;
+		gap: 0.5rem;
 		min-width: 0;
-		flex-wrap: wrap;
 	}
 	.cmd {
-		font-weight: 520;
+		font-weight: 500;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		max-width: 100%;
 	}
-	.hint {
-		font-size: 0.78rem;
-		color: var(--muted);
-	}
-	.addr {
-		font-size: 0.76rem;
-		color: var(--faint);
+	.scope {
 		font-family: var(--mono);
-	}
-	.user {
-		color: var(--muted);
-		font-size: 0.875rem;
+		font-size: 11px;
+		color: var(--faint);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		flex-shrink: 1;
 	}
-
-	/* risk markers */
-	.risk-tag {
-		font-size: 0.68rem;
+	.scope.dim {
+		opacity: 0.75;
+	}
+	.tag {
+		flex: none;
+		font-size: 10px;
 		text-transform: uppercase;
-		letter-spacing: 0.06em;
+		letter-spacing: 0.05em;
 		font-weight: 600;
-		cursor: help;
 	}
-	.risk-system {
+	.t-system {
 		color: var(--danger);
 	}
-	.risk-caution {
+	.t-caution {
 		color: var(--warn);
+	}
+	.metric {
+		font-family: var(--mono);
+		font-size: 11.5px;
+		color: var(--muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.pid {
+		font-family: var(--mono);
+		font-size: 11.5px;
+		color: var(--faint);
+		font-variant-numeric: tabular-nums;
+	}
+	.map {
+		font-family: var(--mono);
+		font-size: 11.5px;
+		color: var(--muted);
+	}
+
+	.chevcell {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--faint);
+	}
+	.chev {
+		transition: transform 0.16s ease;
+	}
+	.row.open .chev {
+		transform: rotate(90deg);
 	}
 
 	/* ---- actions ---- */
-	.action {
+	.actions {
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.4rem;
+		gap: 0.28rem;
 	}
-	.act {
+	.icon-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: 26px;
+		height: 26px;
 		border: none;
 		background: none;
-		border-radius: 8px;
-		color: var(--faint);
-		padding: 0;
-		transition: color 0.15s, background 0.15s;
-	}
-	.row:hover .act {
+		border-radius: 6px;
 		color: var(--muted);
+		padding: 0;
+		transition: color 0.12s, background 0.12s, opacity 0.12s;
 	}
-	.act-danger:hover {
+	.icon-btn:hover:not(:disabled) {
+		background: var(--hover);
+		color: var(--text);
+	}
+	.icon-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.icon-btn.danger.reveal {
+		opacity: 0;
+	}
+	.row:hover .icon-btn.danger.reveal,
+	.row:focus-visible .icon-btn.danger.reveal,
+	.row:focus-within .icon-btn.danger.reveal,
+	.icon-btn.danger.reveal:focus-visible {
+		opacity: 1;
+	}
+	.icon-btn.danger:hover {
 		color: var(--danger);
-		background: color-mix(in srgb, var(--danger) 11%, transparent);
+		background: color-mix(in srgb, var(--danger) 12%, transparent);
 	}
-	.act-locked {
+	.icon-btn.force:hover:not(:disabled) {
+		color: var(--danger);
+	}
+	.icon-btn.locked {
+		color: var(--faint);
 		cursor: not-allowed;
 	}
 	.confirm {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.4rem;
-		flex-wrap: nowrap;
+		gap: 0.22rem;
 	}
-	.act-yes {
+	.kill-btn {
 		border: none;
 		background: var(--danger);
 		color: #fff;
 		border-radius: 6px;
-		padding: 0.34rem 0.72rem;
-		font-size: 0.82rem;
-		font-weight: 500;
+		padding: 0.24rem 0.55rem;
+		font-size: 12px;
+		font-weight: 600;
 		white-space: nowrap;
-		transition: background 0.15s, opacity 0.15s;
+		transition: background 0.12s;
 	}
-	.act-yes:hover:not(:disabled) {
+	.kill-btn:hover:not(:disabled) {
 		background: var(--danger-strong);
 	}
-	.act-yes:disabled {
-		opacity: 0.6;
+	.kill-btn:disabled {
+		opacity: 0.65;
 		cursor: default;
-	}
-	.act-force {
-		border: none;
-		background: none;
-		color: var(--faint);
-		font-size: 0.75rem;
-		padding: 2px 3px;
-		white-space: nowrap;
-		transition: color 0.15s;
-	}
-	.act-force:hover:not(:disabled) {
-		color: var(--danger);
-	}
-	.act-force:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-	.act-cancel {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: none;
-		background: none;
-		border-radius: 6px;
-		color: var(--muted);
-		padding: 0;
-		transition: color 0.15s, background 0.15s;
-	}
-	.act-cancel:hover:not(:disabled) {
-		color: var(--text);
-		background: color-mix(in srgb, var(--text) 8%, transparent);
 	}
 
 	/* ---- tooltip ---- */
-	[data-tooltip] {
+	[data-tip] {
 		position: relative;
 	}
-	[data-tooltip]::after {
-		content: attr(data-tooltip);
+	[data-tip]::after {
+		content: attr(data-tip);
 		position: absolute;
-		bottom: calc(100% + 7px);
+		bottom: calc(100% + 6px);
 		right: 0;
-		padding: 0.3rem 0.5rem;
+		padding: 0.26rem 0.44rem;
 		border-radius: 5px;
 		background: var(--tooltip-bg);
 		color: var(--tooltip-fg);
-		font-size: 0.72rem;
+		font-family: var(--sans);
+		font-size: 11px;
 		font-weight: 500;
 		line-height: 1.2;
 		white-space: nowrap;
@@ -882,80 +953,114 @@
 		opacity: 0;
 		transform: translateY(3px);
 		pointer-events: none;
-		transition: opacity 0.13s ease, transform 0.13s ease;
-		z-index: 20;
-		box-shadow: 0 4px 14px color-mix(in srgb, #000 20%, transparent);
+		transition: opacity 0.12s ease, transform 0.12s ease;
+		z-index: 40;
+		box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
 	}
-	[data-tooltip]:hover::after,
-	[data-tooltip]:focus-visible::after {
+	[data-tip]:hover::after,
+	[data-tip]:focus-visible::after {
 		opacity: 1;
 		transform: translateY(0);
 	}
-
-	/* ---- detail panel ---- */
-	.detail {
-		padding: 0.4rem 0.5rem 1.1rem 2.35rem;
-		border-bottom: 1px solid var(--line);
-		background: color-mix(in srgb, var(--text) 3.5%, transparent);
-		animation: detail-in 0.16s ease;
+	.auto[data-tip]::after,
+	.tbtn[data-tip]::after {
+		right: auto;
 	}
-	@keyframes detail-in {
+
+	/* ---- detail ---- */
+	.detail {
+		padding: 0.35rem 0.85rem 0.85rem 3.2rem;
+		background: var(--hover);
+		animation: fade 0.15s ease;
+	}
+	@keyframes fade {
 		from {
 			opacity: 0;
-			transform: translateY(-3px);
 		}
 		to {
 			opacity: 1;
-			transform: none;
 		}
 	}
 	.facts {
-		margin: 0;
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-		gap: 0.7rem 1.5rem;
-	}
-	.facts div {
 		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-		min-width: 0;
+		flex-wrap: wrap;
+		gap: 0.35rem 2rem;
 	}
-	.facts dt {
-		font-size: 0.68rem;
+	.fact {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	.facts dt,
+	.cmdline dt {
+		font-size: 10.5px;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		color: var(--faint);
+		margin: 0;
 	}
 	.facts dd {
 		margin: 0;
 		font-family: var(--mono);
-		font-size: 0.85rem;
+		font-size: 12px;
 		color: var(--text);
+		font-variant-numeric: tabular-nums;
 	}
 	.cmdline {
-		margin-top: 0.9rem;
+		margin-top: 0.65rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.cmdline span {
-		font-size: 0.68rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--faint);
+		gap: 0.28rem;
 	}
 	.cmdline code {
 		font-family: var(--mono);
-		font-size: 0.8rem;
+		font-size: 11.5px;
 		color: var(--muted);
 		word-break: break-all;
-		line-height: 1.55;
+		line-height: 1.5;
 	}
 	.detail-error {
 		margin: 0;
 		color: var(--danger);
-		font-size: 0.85rem;
+		font-size: 12px;
+	}
+
+	/* ---- states ---- */
+	.empty {
+		padding: 3rem 1rem;
+		text-align: center;
+		color: var(--muted);
+		font-size: 13px;
+	}
+	.notice {
+		margin: 1.5rem 0.85rem;
+		padding: 1.3rem;
+		border: 1px solid var(--border-strong);
+		border-radius: 8px;
+		text-align: center;
+	}
+	.notice-t {
+		margin: 0;
+		font-weight: 600;
+	}
+	.notice-b {
+		margin: 0.35rem 0 0;
+		color: var(--muted);
+		font-size: 12.5px;
+	}
+	.notice-h {
+		margin: 0.8rem 0 0;
+		color: var(--faint);
+		font-size: 12px;
+	}
+	.link {
+		border: none;
+		background: none;
+		padding: 0;
+		color: var(--accent);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		font: inherit;
 	}
 
 	/* ---- skeleton ---- */
@@ -964,22 +1069,14 @@
 	}
 	.sk {
 		display: inline-block;
-		height: 11px;
-		border-radius: 4px;
+		height: 10px;
+		border-radius: 3px;
 		vertical-align: middle;
 		background: linear-gradient(90deg, var(--sk-base) 25%, var(--sk-hi) 37%, var(--sk-base) 63%);
 		background-size: 400% 100%;
-		animation: sk-shimmer 1.4s ease infinite;
+		animation: shimmer 1.4s ease infinite;
 	}
-	.sk-lg {
-		height: 15px;
-	}
-	.sk-act {
-		width: 32px;
-		height: 32px;
-		border-radius: 8px;
-	}
-	@keyframes sk-shimmer {
+	@keyframes shimmer {
 		0% {
 			background-position: 100% 50%;
 		}
@@ -987,90 +1084,75 @@
 			background-position: 0 50%;
 		}
 	}
+
+	/* ---- status bar ---- */
+	.statusbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		height: 34px;
+		padding: 0 0.85rem;
+		border-top: 1px solid var(--border);
+		position: sticky;
+		bottom: 0;
+		background: var(--bg);
+		font-size: 11.5px;
+		color: var(--faint);
+	}
+	.hints {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		flex-wrap: wrap;
+	}
+	.hints .d {
+		opacity: 0.5;
+	}
+	.statusbar kbd {
+		font-family: var(--mono);
+		font-size: 10.5px;
+		color: var(--muted);
+		border: 1px solid var(--border-strong);
+		border-radius: 4px;
+		padding: 0.02rem 0.28rem;
+		line-height: 1.5;
+	}
+	.src code {
+		font-family: var(--mono);
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.sk,
+		.chev,
 		.detail,
-		.ic-chev,
-		[data-tooltip]::after {
+		.pulse,
+		[data-tip]::after {
 			animation: none;
 			transition: none;
 		}
 	}
 
-	/* ---- misc ---- */
-	.banner {
-		margin: 1.25rem 0 0;
-		padding: 0.7rem 0.9rem;
-		border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
-		border-radius: 6px;
-		color: var(--danger);
-		font-size: 0.9rem;
-		background: color-mix(in srgb, var(--danger) 7%, transparent);
-	}
-	.state {
-		margin: 3rem 0;
-		text-align: center;
-		color: var(--muted);
-	}
-	.notice {
-		margin: 2rem 0;
-		padding: 1.4rem 1.5rem;
-		border: 1px solid var(--line-strong);
-		border-radius: 10px;
-		background: var(--surface);
-		text-align: center;
-	}
-	.notice-title {
-		margin: 0;
-		font-weight: 600;
-	}
-	.notice-body {
-		margin: 0.4rem 0 0;
-		color: var(--muted);
-		font-size: 0.9rem;
-	}
-	.notice-hint {
-		margin: 0.9rem 0 0;
-		font-size: 0.85rem;
-		color: var(--faint);
-	}
-	.link {
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--text);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		font: inherit;
-		cursor: pointer;
-	}
-	footer {
-		margin-top: 2.5rem;
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		flex-wrap: wrap;
-		font-size: 0.78rem;
-		color: var(--faint);
-	}
-	footer code {
-		font-family: var(--mono);
-	}
-
-	@media (max-width: 620px) {
-		.row-tcp {
-			grid-template-columns: 24px 54px minmax(0, 1fr) 132px;
+	@media (max-width: 680px) {
+		.app {
+			border-inline: none;
 		}
-		.row-docker {
-			grid-template-columns: 24px 54px minmax(0, 1fr) 120px;
+		.rtcp,
+		.rhead:not(.rdocker) {
+			grid-template-columns: 14px 48px minmax(0, 1fr) 92px 20px;
 		}
-		.col-user,
-		.pid,
-		.inner {
+		.rdocker {
+			grid-template-columns: 14px 48px minmax(0, 1fr) 92px 20px;
+		}
+		/* drop the numeric columns on small screens */
+		.cell.r,
+		.map,
+		.dcol-internal {
 			display: none;
 		}
-		.detail {
-			padding-left: 1rem;
+		.clock,
+		.stat {
+			display: none;
 		}
 	}
 </style>
