@@ -9,7 +9,7 @@ const run = promisify(execFile);
 const CURRENT_USER = process.env.USER ?? process.env.LOGNAME ?? '';
 
 /** Decide how dangerous it is to kill a given listener. */
-function assessRisk(command: string, user: string, port: number): { risk: Risk; note?: string } {
+const assessRisk = (command: string, user: string, port: number): { risk: Risk; note?: string } => {
 	if (SYSTEM_COMMANDS.has(command)) {
 		return { risk: 'system', note: `${command}: system process — killing it may disrupt the OS or a service.` };
 	}
@@ -43,7 +43,7 @@ function assessRisk(command: string, user: string, port: number): { risk: Risk; 
  *   -sTCP:LISTEN     only sockets in the LISTEN state
  *   -FpcnL           emit the pid, command, name and login fields
  */
-export async function listPorts(): Promise<PortEntry[]> {
+export const listPorts = async (): Promise<PortEntry[]> => {
 	let stdout = '';
 	try {
 		const res = await run('lsof', ['-nP', '+c0', '-iTCP', '-sTCP:LISTEN', '-FpcnL'], {
@@ -123,7 +123,7 @@ export async function listPorts(): Promise<PortEntry[]> {
 }
 
 /** Parse an lsof name field such as "*:3000", "127.0.0.1:5432" or "[::1]:6379". */
-function parseName(name: string): { address: string; port: number } | null {
+const parseName = (name: string): { address: string; port: number } | null => {
 	const idx = name.lastIndexOf(':');
 	if (idx === -1) return null;
 	const port = Number(name.slice(idx + 1));
@@ -139,7 +139,7 @@ function parseName(name: string): { address: string; port: number } | null {
  * and release the port gracefully. SIGKILL (`force`) is the non-negotiable
  * version the kernel applies immediately; use it only when SIGTERM is ignored.
  */
-export function killByPid(pid: number, force = false): KillOutcome {
+export const killByPid = (pid: number, force = false): KillOutcome => {
 	// Guard against pid 1 (init/launchd) and nonsense values.
 	if (!Number.isInteger(pid) || pid <= 1) {
 		return { ok: false, reason: 'invalid', message: 'Invalid PID.' };

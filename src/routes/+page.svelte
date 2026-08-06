@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { ContainerInfo, DockerPort, PortEntry, View } from '$lib/types';
+	import { Icon } from '$lib/components';
+	import type { ContainerInfo, Detail, DockerPort, PortEntry, Tab, View } from '$lib/types';
 	import { REFRESH_MS, SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
-	import { formatMem, formatNow, readErrorMessage, scopeLabel } from '$lib/utils';
-
-	type Detail = {
-		loading: boolean;
-		error: string | null;
-		data: Record<string, string | number | null> | null;
-	};
-	type Tab = View | 'containers';
+	import {
+		formatMem,
+		formatNow,
+		matchContainer,
+		matchDocker,
+		matchPort,
+		readErrorMessage,
+		scopeLabel
+	} from '$lib/utils';
 
 	let view = $state<Tab>('tcp');
 
@@ -54,34 +56,7 @@
 	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
 	let runningContainers = $derived(containers.filter((c) => c.running).length);
 
-	function matchPort(p: PortEntry, q: string) {
-		return (
-			String(p.port).includes(q) ||
-			p.command.toLowerCase().includes(q) ||
-			(p.fullCommand ?? '').toLowerCase().includes(q) ||
-			p.user.toLowerCase().includes(q)
-		);
-	}
-	function matchDocker(d: DockerPort, q: string) {
-		return (
-			String(d.hostPort).includes(q) ||
-			String(d.containerPort).includes(q) ||
-			d.container.toLowerCase().includes(q) ||
-			d.image.toLowerCase().includes(q)
-		);
-	}
-	function matchContainer(c: ContainerInfo, q: string) {
-		return (
-			c.name.toLowerCase().includes(q) ||
-			c.image.toLowerCase().includes(q) ||
-			(c.project ?? '').toLowerCase().includes(q) ||
-			(c.service ?? '').toLowerCase().includes(q) ||
-			c.status.toLowerCase().includes(q) ||
-			c.ports.toLowerCase().includes(q)
-		);
-	}
-
-	async function loadPorts() {
+	const loadPorts = async () => {
 		try {
 			const res = await fetch('/api/ports');
 			if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -95,7 +70,7 @@
 		}
 	}
 
-	async function loadDocker() {
+	const loadDocker = async () => {
 		try {
 			const res = await fetch('/api/docker');
 			if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -112,7 +87,7 @@
 		}
 	}
 
-	async function loadContainers() {
+	const loadContainers = async () => {
 		try {
 			const res = await fetch('/api/docker/containers');
 			if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -129,13 +104,13 @@
 		}
 	}
 
-	function refresh() {
+	const refresh = () => {
 		if (view === 'tcp') return loadPorts();
 		if (view === 'docker') return loadDocker();
 		return loadContainers();
 	}
 
-	function switchView(v: Tab) {
+	const switchView = (v: Tab) => {
 		if (view === v) return;
 		view = v;
 		confirming = null;
@@ -145,7 +120,7 @@
 		refresh();
 	}
 
-	async function kill(pid: number, force = false) {
+	const kill = async (pid: number, force = false) => {
 		killing = pid;
 		try {
 			const res = await fetch('/api/kill', {
@@ -163,7 +138,7 @@
 		}
 	}
 
-	async function containerDo(id: string, action: 'start' | 'stop' | 'restart') {
+	const containerDo = async (id: string, action: 'start' | 'stop' | 'restart') => {
 		busyId = id;
 		try {
 			const res = await fetch('/api/docker', {
@@ -181,34 +156,34 @@
 		}
 	}
 
-	function copyText(text: string) {
+	const copyText = (text: string) => {
 		navigator.clipboard?.writeText(text);
 	}
 
-	function beginAction(kind: View, id: number | string) {
+	const beginAction = (kind: View, id: number | string) => {
 		if (kind === 'tcp') confirming = id as number;
 		else dconfirming = id as string;
 	}
-	function cancelAction(kind: View) {
+	const cancelAction = (kind: View) => {
 		if (kind === 'tcp') confirming = null;
 		else dconfirming = null;
 	}
-	function confirmAction(kind: View, id: number | string) {
+	const confirmAction = (kind: View, id: number | string) => {
 		if (kind === 'tcp') kill(id as number);
 		else containerDo(id as string, 'stop');
 	}
 
 	// ---- expand / detail ----
-	function keyFor(kind: View, item: PortEntry | DockerPort): string {
+	const keyFor = (kind: View, item: PortEntry | DockerPort): string => {
 		return kind === 'tcp'
 			? 'tcp:' + (item as PortEntry).pid + ':' + (item as PortEntry).port
 			: 'docker:' + (item as DockerPort).containerId + ':' + (item as DockerPort).hostPort + ':' + (item as DockerPort).protocol;
 	}
-	function isOpen(key: string) {
+	const isOpen = (key: string) => {
 		return expanded.includes(key);
 	}
 
-	async function loadDetail(key: string, kind: Tab, id: number | string) {
+	const loadDetail = async (key: string, kind: Tab, id: number | string) => {
 		details = { ...details, [key]: { loading: true, error: null, data: null } };
 		try {
 			const eid = encodeURIComponent(String(id));
@@ -230,7 +205,7 @@
 		}
 	}
 
-	function toggleExpand(key: string, kind: Tab, id: number | string) {
+	const toggleExpand = (key: string, kind: Tab, id: number | string) => {
 		if (isOpen(key)) {
 			expanded = expanded.filter((k) => k !== key);
 		} else {
@@ -239,18 +214,18 @@
 		}
 	}
 
-	function rowClick(e: MouseEvent, key: string, kind: Tab, id: number | string) {
+	const rowClick = (e: MouseEvent, key: string, kind: Tab, id: number | string) => {
 		if ((e.target as HTMLElement).closest('button')) return;
 		toggleExpand(key, kind, id);
 	}
 
-	function focusRow(i: number) {
+	const focusRow = (i: number) => {
 		(document.querySelector(`[data-idx="${i}"]`) as HTMLElement | null)?.focus();
 	}
 
 	// Per-row keys: ↑↓ / j k move focus, ↵ expands, x kills — when the row itself
 	// (not an inner button) holds focus.
-	function rowKey(e: KeyboardEvent, i: number, key: string, kind: Tab, id: number | string, locked: boolean) {
+	const rowKey = (e: KeyboardEvent, i: number, key: string, kind: Tab, id: number | string, locked: boolean) => {
 		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
@@ -269,7 +244,7 @@
 		}
 	}
 
-	function onGlobalKey(e: KeyboardEvent) {
+	const onGlobalKey = (e: KeyboardEvent) => {
 		const t = e.target as HTMLElement;
 		const inInput = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
 		if (e.key === '/' && !inInput) {
@@ -299,67 +274,13 @@
 	<title>portpilot — ports & docker</title>
 </svelte:head>
 
-{#snippet chevron()}
-	<svg class="chev" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-		<path d="M9 5l7 7-7 7" />
-	</svg>
-{/snippet}
-
-{#snippet powerIcon()}
-	<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-		<path d="M12 4v8" /><path d="M7.6 7.2a7 7 0 1 0 8.8 0" />
-	</svg>
-{/snippet}
-
-{#snippet stopIcon()}
-	<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-		<rect x="6" y="6" width="12" height="12" rx="2.5" />
-	</svg>
-{/snippet}
-
-{#snippet zapIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
-		<path d="M13 2L4 14h6l-1 8 9-12h-6z" />
-	</svg>
-{/snippet}
-
-{#snippet xIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-		<path d="M6 6l12 12M18 6L6 18" />
-	</svg>
-{/snippet}
-
-{#snippet lockIcon()}
-	<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-		<rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
-	</svg>
-{/snippet}
-
-{#snippet copyIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-		<rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
-	</svg>
-{/snippet}
-
-{#snippet restartIcon()}
-	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-		<path d="M3 12a9 9 0 1 0 2.6-6.4" /><path d="M3 4v5h5" />
-	</svg>
-{/snippet}
-
-{#snippet playIcon()}
-	<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-		<path d="M7 5v14l11-7z" />
-	</svg>
-{/snippet}
-
 {#snippet actionCell(a: { kind: View; id: number | string; locked: boolean; copy?: number })}
 	{@const active = a.kind === 'tcp' ? confirming === a.id : dconfirming === a.id}
 	{@const busy = a.kind === 'tcp' ? killing === a.id : busyId === a.id}
 	<span class="cell actions">
 		{#if a.locked}
 			<span class="icon-btn locked" role="img" aria-label="Protected system process" data-tip="Protected — can’t kill">
-				{@render lockIcon()}
+				<Icon name="lock" />
 			</span>
 		{:else if active}
 			<span class="confirm">
@@ -368,26 +289,26 @@
 				</button>
 				{#if a.kind === 'tcp'}
 					<button class="icon-btn force" onclick={() => kill(a.id as number, true)} disabled={busy} data-tip="Force · SIGKILL" aria-label="Force kill">
-						{@render zapIcon()}
+						<Icon name="zap" />
 					</button>
 				{/if}
 				<button class="icon-btn" onclick={() => cancelAction(a.kind)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
-					{@render xIcon()}
+					<Icon name="x" />
 				</button>
 			</span>
 		{:else}
 			{#if a.copy != null}
 				<button class="icon-btn reveal" onclick={() => copyText('localhost:' + a.copy)} data-tip={'Copy localhost:' + a.copy} aria-label="Copy address">
-					{@render copyIcon()}
+					<Icon name="copy" />
 				</button>
 			{/if}
 			{#if a.kind === 'docker'}
 				<button class="icon-btn reveal" onclick={() => containerDo(a.id as string, 'restart')} disabled={busy} data-tip="Restart container" aria-label="Restart container">
-					{@render restartIcon()}
+					<Icon name="restart" />
 				</button>
 			{/if}
 			<button class="icon-btn danger reveal" onclick={() => beginAction(a.kind, a.id)} data-tip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'} aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}>
-				{#if a.kind === 'tcp'}{@render powerIcon()}{:else}{@render stopIcon()}{/if}
+				{#if a.kind === 'tcp'}<Icon name="power" />{:else}<Icon name="stop" />{/if}
 			</button>
 		{/if}
 	</span>
@@ -434,19 +355,19 @@
 					{busy ? '…' : 'Stop'}
 				</button>
 				<button class="icon-btn" onclick={() => (dconfirming = null)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
-					{@render xIcon()}
+					<Icon name="x" />
 				</button>
 			</span>
 		{:else if c.running}
 			<button class="icon-btn reveal" onclick={() => containerDo(c.id, 'restart')} disabled={busy} data-tip="Restart" aria-label="Restart">
-				{@render restartIcon()}
+				<Icon name="restart" />
 			</button>
 			<button class="icon-btn danger reveal" onclick={() => (dconfirming = c.id)} disabled={busy} data-tip="Stop" aria-label="Stop">
-				{@render stopIcon()}
+				<Icon name="stop" />
 			</button>
 		{:else}
 			<button class="icon-btn go" onclick={() => containerDo(c.id, 'start')} disabled={busy} data-tip="Start" aria-label="Start">
-				{@render playIcon()}
+				<Icon name="play" />
 			</button>
 		{/if}
 	</span>
@@ -497,9 +418,7 @@
 	</header>
 
 	<div class="filterbar">
-		<svg class="search" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-			<circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" />
-		</svg>
+		<span class="search"><Icon name="search" /></span>
 		<input
 			bind:this={filterEl}
 			bind:value={filter}
@@ -511,7 +430,7 @@
 			aria-label="Filter"
 		/>
 		{#if filter}
-			<button class="clear" onclick={() => (filter = '')} aria-label="Clear filter">{@render xIcon()}</button>
+			<button class="clear" onclick={() => (filter = '')} aria-label="Clear filter"><Icon name="x" /></button>
 		{:else}
 			<kbd class="slash">/</kbd>
 		{/if}
@@ -573,7 +492,7 @@
 						<span class="cell r metric">{p.rssMb != null ? formatMem(p.rssMb) : '·'}</span>
 						<span class="cell r pid">{p.pid}</span>
 						{@render actionCell({ kind: 'tcp', id: p.pid, locked: p.risk === 'system' })}
-						<span class="cell chevcell">{@render chevron()}</span>
+						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
 					</div>
 					{#if isOpen(key)}{@render detailPanel(key, 'tcp')}{/if}
 				{/each}
@@ -628,7 +547,7 @@
 						</span>
 						<span class="cell map">→ {d.containerPort}/{d.protocol}</span>
 						{@render actionCell({ kind: 'docker', id: d.containerId, locked: false, copy: d.hostPort })}
-						<span class="cell chevcell">{@render chevron()}</span>
+						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
 					</div>
 					{#if isOpen(key)}{@render detailPanel(key, 'docker')}{/if}
 				{/each}
@@ -689,7 +608,7 @@
 						<span class="cell cstatus" class:up={c.running}>{c.status}</span>
 						<span class="cell cports">{c.ports}</span>
 						{@render containerActions(c)}
-						<span class="cell chevcell">{@render chevron()}</span>
+						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
 					</div>
 					{#if isOpen(key)}{@render logsPanel(key)}{/if}
 				{/each}
@@ -848,6 +767,8 @@
 		z-index: 25;
 	}
 	.search {
+		display: flex;
+		align-items: center;
 		color: var(--faint);
 		flex: none;
 	}
@@ -1104,12 +1025,6 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--faint);
-	}
-	.chev {
-		transition: transform 0.16s ease;
-	}
-	.row.open .chev {
-		transform: rotate(90deg);
 	}
 
 	/* ---- actions ---- */

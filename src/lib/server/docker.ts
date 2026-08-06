@@ -20,7 +20,7 @@ const run = promisify(execFile);
  * `Ports` field carries the published mappings, e.g.
  * "0.0.0.0:5432->5432/tcp, :::5432->5432/tcp".
  */
-export async function listDockerPorts(): Promise<DockerListing> {
+export const listDockerPorts = async (): Promise<DockerListing> => {
 	let stdout = '';
 	try {
 		const res = await run('docker', ['ps', '--no-trunc', '--format', '{{json .}}'], {
@@ -63,9 +63,9 @@ export async function listDockerPorts(): Promise<DockerListing> {
  * Parse a docker "Ports" string into published host→container mappings.
  * Skips exposed-but-unpublished ports (no "->") and port ranges.
  */
-function parsePortField(
+const parsePortField = (
 	raw: string
-): Array<{ hostPort: number; containerPort: number; protocol: string; address: string }> {
+): Array<{ hostPort: number; containerPort: number; protocol: string; address: string }> => {
 	const out: Array<{ hostPort: number; containerPort: number; protocol: string; address: string }> = [];
 	if (!raw) return out;
 
@@ -95,7 +95,7 @@ function parsePortField(
 }
 
 /** Live resource usage for one container, via `docker stats --no-stream`. */
-export async function getContainerStats(id: string): Promise<ContainerStats | null> {
+export const getContainerStats = async (id: string): Promise<ContainerStats | null> => {
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) return null;
 	try {
 		const { stdout } = await run(
@@ -130,7 +130,7 @@ const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
  * Start, stop or restart a container. `stop` / `restart` are graceful: SIGTERM
  * to the main process, then SIGKILL after a grace period.
  */
-export async function containerAction(id: string, action: ContainerAction): Promise<StopOutcome> {
+export const containerAction = async (id: string, action: ContainerAction): Promise<StopOutcome> => {
 	if (!ID_RE.test(id)) return { ok: false, message: 'Invalid container id.' };
 	if (action !== 'start' && action !== 'stop' && action !== 'restart') {
 		return { ok: false, message: 'Invalid action.' };
@@ -148,7 +148,7 @@ export async function containerAction(id: string, action: ContainerAction): Prom
 }
 
 /** Every container (running + stopped) with status, health and stack labels. */
-export async function listContainers(): Promise<ContainerListing> {
+export const listContainers = async (): Promise<ContainerListing> => {
 	let stdout = '';
 	try {
 		const res = await run('docker', ['ps', '-a', '--no-trunc', '--format', '{{json .}}'], {
@@ -196,7 +196,7 @@ export async function listContainers(): Promise<ContainerListing> {
 }
 
 /** Recent log lines for a container (best-effort tail). */
-export async function getContainerLogs(id: string, tail = 200): Promise<string | null> {
+export const getContainerLogs = async (id: string, tail = 200): Promise<string | null> => {
 	if (!ID_RE.test(id)) return null;
 	const n = Number.isInteger(tail) && tail > 0 && tail <= 2000 ? tail : 200;
 	try {
@@ -211,14 +211,14 @@ export async function getContainerLogs(id: string, tail = 200): Promise<string |
 	}
 }
 
-function parseHealth(status: string): ContainerInfo['health'] {
+const parseHealth = (status: string): ContainerInfo['health'] => {
 	if (/\(healthy\)/i.test(status)) return 'healthy';
 	if (/\(unhealthy\)/i.test(status)) return 'unhealthy';
 	if (/health: starting/i.test(status)) return 'starting';
 	return '';
 }
 
-function labelValue(labels: string, key: string): string | undefined {
+const labelValue = (labels: string, key: string): string | undefined => {
 	for (const part of labels.split(',')) {
 		const eq = part.indexOf('=');
 		if (eq !== -1 && part.slice(0, eq) === key) return part.slice(eq + 1);
@@ -227,7 +227,7 @@ function labelValue(labels: string, key: string): string | undefined {
 }
 
 /** Docker "Ports" string → compact "5432, 6379" / "8080→80" published list. */
-function compactPublished(raw: string): string {
+const compactPublished = (raw: string): string => {
 	const seen = new Set<string>();
 	for (const part of raw.split(',')) {
 		const seg = part.trim();
@@ -244,12 +244,12 @@ function compactPublished(raw: string): string {
 }
 
 /** Strip ANSI escapes and cap length so a log peek stays lightweight. */
-function trimLogs(raw: string): string {
+const trimLogs = (raw: string): string => {
 	const clean = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 	return clean.length > 20000 ? clean.slice(-20000) : clean;
 }
 
-function describeError(err: unknown): string {
+const describeError = (err: unknown): string => {
 	const e = err as { code?: string; stderr?: string; message?: string };
 	if (e.code === 'ENOENT') return 'Docker CLI not found — is it installed?';
 	const stderr = (e.stderr ?? '').toString();

@@ -9,7 +9,7 @@ const run = promisify(execFile);
  * `-o field=` prints the column with no header; `command` is kept last so the
  * remainder of the line (which contains spaces) is captured whole.
  */
-export async function getProcessInfo(pid: number): Promise<ProcessInfo | null> {
+export const getProcessInfo = async (pid: number): Promise<ProcessInfo | null> => {
 	if (!Number.isInteger(pid) || pid <= 0) return null;
 	try {
 		const { stdout } = await run(
@@ -44,7 +44,7 @@ export type ProcessStat = { cpu: number; mem: number; rssMb: number; command: st
  * cheap enough to run on every refresh. `command` is last (it contains spaces)
  * so the rest of the line is captured whole.
  */
-export async function getProcessStats(pids: number[]): Promise<Map<number, ProcessStat>> {
+export const getProcessStats = async (pids: number[]): Promise<Map<number, ProcessStat>> => {
 	const out = new Map<number, ProcessStat>();
 	const valid = [...new Set(pids)].filter((p) => Number.isInteger(p) && p > 0);
 	if (valid.length === 0) return out;
