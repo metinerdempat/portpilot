@@ -3,6 +3,8 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
+export type Risk = 'safe' | 'caution' | 'system';
+
 export interface PortEntry {
 	/** The TCP port being listened on, e.g. 3000. */
 	port: number;
@@ -15,6 +17,45 @@ export interface PortEntry {
 	/** Bind address, e.g. "*", "127.0.0.1", "::1". */
 	address: string;
 	protocol: 'TCP';
+	/** How risky it is to kill this process. */
+	risk: Risk;
+	/** Short reason shown to the user when risk is not "safe". */
+	riskNote?: string;
+}
+
+/**
+ * Processes that are risky to kill — doing so can destabilise the OS or take
+ * down a shared service. Names are matched against `lsof +c0` output, which is
+ * the full, untruncated command name.
+ */
+const SYSTEM_COMMANDS = new Set([
+	// macOS
+	'launchd', 'ControlCenter', 'rapportd', 'sharingd', 'mDNSResponder',
+	'AirPlayXPCHelper', 'identityservicesd', 'apsd', 'nsurlsessiond', 'cloudd',
+	'remoted', 'SystemUIServer', 'WindowServer', 'coreaudiod', 'trustd',
+	'searchpartyd', 'Spotlight', 'mds', 'mds_stores',
+	// linux / cross-platform daemons
+	'systemd', 'sshd', 'cupsd', 'cups-browsed', 'avahi-daemon', 'rpcbind',
+	'netbiosd', 'dnsmasq'
+]);
+
+const CURRENT_USER = process.env.USER ?? process.env.LOGNAME ?? '';
+
+/** Decide how dangerous it is to kill a given listener. */
+function assessRisk(command: string, user: string, port: number): { risk: Risk; note?: string } {
+	if (SYSTEM_COMMANDS.has(command)) {
+		return { risk: 'system', note: `${command}: sistem süreci — kapatmak sistemi ya da bir servisi bozabilir.` };
+	}
+	if (user === 'root') {
+		return { risk: 'caution', note: 'root kullanıcısına ait — büyük olasılıkla bir sistem servisi (kapatmak sudo ister).' };
+	}
+	if (port < 1024) {
+		return { risk: 'caution', note: 'Ayrıcalıklı port (<1024) — genelde bir sistem/servis portudur.' };
+	}
+	if (CURRENT_USER && user && user !== CURRENT_USER) {
+		return { risk: 'caution', note: `Başka bir kullanıcıya ait (${user}).` };
+	}
+	return { risk: 'safe' };
 }
 
 /**
@@ -83,13 +124,16 @@ export async function listPorts(): Promise<PortEntry[]> {
 				const key = `${pid}:${parsed.port}`;
 				if (seen.has(key)) break;
 				seen.add(key);
+				const { risk, note } = assessRisk(command, user, parsed.port);
 				entries.push({
 					pid,
 					command,
 					user,
 					port: parsed.port,
 					address: parsed.address,
-					protocol: 'TCP'
+					protocol: 'TCP',
+					risk,
+					riskNote: note
 				});
 				break;
 			}

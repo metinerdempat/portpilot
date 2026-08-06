@@ -8,6 +8,8 @@
 		user: string;
 		address: string;
 		protocol: string;
+		risk: 'safe' | 'caution' | 'system';
+		riskNote?: string;
 	}
 
 	interface DockerPort {
@@ -29,12 +31,15 @@
 	let portsReady = $state(false);
 	let confirming = $state<number | null>(null); // pid awaiting confirmation
 	let killing = $state<number | null>(null); // pid currently being killed
+	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
 
 	// ---- docker ports ----
 	let dports = $state<DockerPort[]>([]);
 	let dockerReady = $state(false);
 	let dockerAvailable = $state(true);
 	let dockerReason = $state<string | null>(null);
+	let dconfirming = $state<string | null>(null); // container id awaiting confirmation
+	let stopping = $state<string | null>(null); // container id currently stopping
 
 	// ---- shared ----
 	let error = $state<string | null>(null);
@@ -123,6 +128,7 @@
 		if (view === v) return;
 		view = v;
 		confirming = null;
+		dconfirming = null;
 		error = null;
 		refresh();
 	}
@@ -142,6 +148,24 @@
 			error = e instanceof Error ? e.message : 'Süreç sonlandırılamadı.';
 		} finally {
 			killing = null;
+		}
+	}
+
+	async function stopContainer(id: string) {
+		stopping = id;
+		try {
+			const res = await fetch('/api/docker', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			if (!res.ok) throw new Error(await readError(res));
+			dconfirming = null;
+			await loadDocker();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Konteyner durdurulamadı.';
+		} finally {
+			stopping = null;
 		}
 	}
 
@@ -192,6 +216,7 @@
 			<div class="count">
 				{#if view === 'tcp' && portsReady}
 					<strong>{ports.length}</strong> aktif port
+					{#if riskyCount > 0}<span class="risky-note"> · {riskyCount} riskli</span>{/if}
 				{:else if view === 'docker' && dockerReady && dockerAvailable}
 					<strong>{dports.length}</strong> yayınlanan port
 				{/if}
@@ -221,19 +246,24 @@
 				<div class="row row-tcp head" role="row">
 					<span role="columnheader">Port</span>
 					<span role="columnheader">Süreç</span>
-					<span class="num" role="columnheader">PID</span>
+					<span class="num pid" role="columnheader">PID</span>
 					<span class="col-user" role="columnheader">Kullanıcı</span>
 					<span role="columnheader"></span>
 				</div>
 
 				{#each ports as p (p.pid + ':' + p.port)}
-					<div class="row row-tcp" role="row">
+					<div class="row row-tcp" role="row" data-risk={p.risk}>
 						<span class="port" role="cell">{p.port}</span>
 
 						<span class="proc" role="cell">
 							<span class="cmd">{p.command || '—'}</span>
 							{#if hints[p.port]}<span class="hint">{hints[p.port]}</span>{/if}
 							<span class="addr">{scope(p.address)}</span>
+							{#if p.risk !== 'safe'}
+								<span class="risk-tag risk-{p.risk}" title={p.riskNote}>
+									{p.risk === 'system' ? 'sistem' : 'dikkat'}
+								</span>
+							{/if}
 						</span>
 
 						<span class="num pid" role="cell">{p.pid}</span>
@@ -280,8 +310,8 @@
 			<div class="row row-docker head" role="row">
 				<span role="columnheader">Port</span>
 				<span role="columnheader">Konteyner</span>
-				<span class="num" role="columnheader">İç Port</span>
-				<span class="col-scope" role="columnheader">Kapsam</span>
+				<span class="num inner" role="columnheader">İç Port</span>
+				<span role="columnheader"></span>
 			</div>
 
 			{#each dports as d (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
@@ -292,10 +322,37 @@
 						<span class="cmd">{d.container}</span>
 						<span class="hint">{d.image}</span>
 						{#if hints[d.hostPort]}<span class="hint dim">{hints[d.hostPort]}</span>{/if}
+						<span class="addr">{scope(d.address)}</span>
 					</span>
 
 					<span class="num inner" role="cell">→ {d.containerPort}/{d.protocol}</span>
-					<span class="col-scope scope" role="cell">{scope(d.address)}</span>
+
+					<span class="action" role="cell">
+						{#if dconfirming === d.containerId}
+							<button
+								class="btn danger"
+								onclick={() => stopContainer(d.containerId)}
+								disabled={stopping === d.containerId}
+							>
+								{stopping === d.containerId ? 'Durduruluyor…' : 'Onayla'}
+							</button>
+							<button
+								class="btn ghost"
+								onclick={() => (dconfirming = null)}
+								disabled={stopping === d.containerId}
+							>
+								Vazgeç
+							</button>
+						{:else}
+							<button
+								class="btn kill"
+								onclick={() => (dconfirming = d.containerId)}
+								title="Konteyneri durdurur — bu portu boşaltır"
+							>
+								Durdur
+							</button>
+						{/if}
+					</span>
 				</div>
 			{/each}
 		</div>
@@ -306,7 +363,7 @@
 		{#if view === 'tcp'}
 			<span>Onayla = SIGTERM (nazik) · zorla = SIGKILL (sert)</span>
 		{:else}
-			<span>Host portu → konteyner portu eşlemesi</span>
+			<span>Durdur = <code>docker stop</code> · host → konteyner eşlemesi</span>
 		{/if}
 	</footer>
 </main>
@@ -392,6 +449,9 @@
 		font-family: var(--mono);
 		font-size: 0.8rem;
 		color: var(--faint);
+	}
+	.risky-note {
+		color: var(--warn);
 	}
 	.controls {
 		display: flex;
@@ -481,7 +541,7 @@
 		grid-template-columns: 74px minmax(0, 1fr) 76px 104px 168px;
 	}
 	.row-docker {
-		grid-template-columns: 74px minmax(0, 1fr) 128px 120px;
+		grid-template-columns: 74px minmax(0, 1fr) 116px 140px;
 	}
 	.row.head {
 		padding-top: 0.75rem;
@@ -542,9 +602,26 @@
 		color: var(--faint);
 		font-family: var(--mono);
 	}
-	.scope {
-		font-size: 0.8rem;
-		color: var(--muted);
+
+	/* risk markers */
+	.risk-tag {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 600;
+		cursor: help;
+	}
+	.risk-system {
+		color: var(--danger);
+	}
+	.risk-caution {
+		color: var(--warn);
+	}
+	.row[data-risk='system'] {
+		box-shadow: inset 2px 0 0 var(--danger);
+	}
+	.row[data-risk='caution'] {
+		box-shadow: inset 2px 0 0 var(--warn);
 	}
 	.user {
 		color: var(--muted);
@@ -625,11 +702,11 @@
 			grid-template-columns: 60px minmax(0, 1fr) 132px;
 		}
 		.row-docker {
-			grid-template-columns: 60px minmax(0, 1fr) 120px;
+			grid-template-columns: 60px minmax(0, 1fr) 116px;
 		}
 		.col-user,
-		.num.pid,
-		.col-scope {
+		.pid,
+		.inner {
 			display: none;
 		}
 	}

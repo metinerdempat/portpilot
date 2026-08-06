@@ -106,6 +106,30 @@ function parsePortField(
 	return out;
 }
 
+export type StopOutcome = { ok: true } | { ok: false; message: string };
+
+/**
+ * Stop the container that publishes a port — the Docker equivalent of killing
+ * the process behind a TCP port. `docker stop` is graceful: it sends SIGTERM to
+ * the container's main process, then SIGKILL after a grace period.
+ */
+export async function stopContainer(id: string): Promise<StopOutcome> {
+	// execFile uses no shell, but reject ids that could be read as a flag ("-…").
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) {
+		return { ok: false, message: 'Geçersiz konteyner kimliği.' };
+	}
+	try {
+		await run('docker', ['stop', id], { maxBuffer: 1024 * 1024 });
+		return { ok: true };
+	} catch (err) {
+		const e = err as { stderr?: string; message?: string };
+		return {
+			ok: false,
+			message: (e.stderr ?? '').toString().trim() || e.message || 'Konteyner durdurulamadı.'
+		};
+	}
+}
+
 function describeError(err: unknown): string {
 	const e = err as { code?: string; stderr?: string; message?: string };
 	if (e.code === 'ENOENT') return 'Docker CLI bulunamadı — kurulu değil.';
