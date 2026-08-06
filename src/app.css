@@ -131,6 +131,22 @@ button {
 	}
 }
 
+/* Skeleton shimmer — a gradient + animation that can't be a single utility. */
+@utility sk {
+	display: inline-block;
+	border-radius: 3px;
+	vertical-align: middle;
+	background: linear-gradient(90deg, var(--sk-base) 25%, var(--sk-hi) 37%, var(--sk-base) 63%);
+	background-size: 400% 100%;
+	animation: shimmer 1.4s ease infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sk {
+		animation: none;
+	}
+}
+
 /* Tooltip bubble — pseudo-element content can't be a utility. */
 [data-tip] {
 	position: relative;
