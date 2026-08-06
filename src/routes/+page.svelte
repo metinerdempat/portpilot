@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { DockerPort, PortEntry, View } from '$lib/types';
+	import type { ContainerInfo, DockerPort, PortEntry, View } from '$lib/types';
 	import { REFRESH_MS, SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
 	import { formatMem, formatNow, readErrorMessage, scopeLabel } from '$lib/utils';
 
@@ -9,8 +9,9 @@
 		error: string | null;
 		data: Record<string, string | number | null> | null;
 	};
+	type Tab = View | 'containers';
 
-	let view = $state<View>('tcp');
+	let view = $state<Tab>('tcp');
 
 	let ports = $state<PortEntry[]>([]);
 	let portsReady = $state(false);
@@ -22,7 +23,13 @@
 	let dockerAvailable = $state(true);
 	let dockerReason = $state<string | null>(null);
 	let dconfirming = $state<string | null>(null);
-	let stopping = $state<string | null>(null);
+	let busyId = $state<string | null>(null); // container action in flight (stop/start/restart)
+
+	// ---- containers ----
+	let containers = $state<ContainerInfo[]>([]);
+	let containersReady = $state(false);
+	let containerAvail = $state(true);
+	let containerReason = $state<string | null>(null);
 
 	let expanded = $state<string[]>([]);
 	let details = $state<Record<string, Detail>>({});
@@ -41,7 +48,11 @@
 	let visibleDports = $derived(
 		filter.trim() ? dports.filter((d) => matchDocker(d, filter.toLowerCase())) : dports
 	);
+	let visibleContainers = $derived(
+		filter.trim() ? containers.filter((c) => matchContainer(c, filter.toLowerCase())) : containers
+	);
 	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
+	let runningContainers = $derived(containers.filter((c) => c.running).length);
 
 	function matchPort(p: PortEntry, q: string) {
 		return String(p.port).includes(q) || p.command.toLowerCase().includes(q) || p.user.toLowerCase().includes(q);
@@ -52,6 +63,16 @@
 			String(d.containerPort).includes(q) ||
 			d.container.toLowerCase().includes(q) ||
 			d.image.toLowerCase().includes(q)
+		);
+	}
+	function matchContainer(c: ContainerInfo, q: string) {
+		return (
+			c.name.toLowerCase().includes(q) ||
+			c.image.toLowerCase().includes(q) ||
+			(c.project ?? '').toLowerCase().includes(q) ||
+			(c.service ?? '').toLowerCase().includes(q) ||
+			c.status.toLowerCase().includes(q) ||
+			c.ports.toLowerCase().includes(q)
 		);
 	}
 
@@ -86,11 +107,30 @@
 		}
 	}
 
-	function refresh() {
-		return view === 'tcp' ? loadPorts() : loadDocker();
+	async function loadContainers() {
+		try {
+			const res = await fetch('/api/docker/containers');
+			if (!res.ok) throw new Error(await readErrorMessage(res));
+			const data = await res.json();
+			containerAvail = data.available;
+			containerReason = data.reason ?? null;
+			containers = data.containers;
+			error = null;
+			updatedAt = formatNow();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to read containers.';
+		} finally {
+			containersReady = true;
+		}
 	}
 
-	function switchView(v: View) {
+	function refresh() {
+		if (view === 'tcp') return loadPorts();
+		if (view === 'docker') return loadDocker();
+		return loadContainers();
+	}
+
+	function switchView(v: Tab) {
 		if (view === v) return;
 		view = v;
 		confirming = null;
@@ -118,22 +158,26 @@
 		}
 	}
 
-	async function stopContainer(id: string) {
-		stopping = id;
+	async function containerDo(id: string, action: 'start' | 'stop' | 'restart') {
+		busyId = id;
 		try {
 			const res = await fetch('/api/docker', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ id })
+				body: JSON.stringify({ id, action })
 			});
 			if (!res.ok) throw new Error(await readErrorMessage(res));
 			dconfirming = null;
-			await loadDocker();
+			await (view === 'containers' ? loadContainers() : loadDocker());
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to stop the container.';
+			error = e instanceof Error ? e.message : `Failed to ${action} the container.`;
 		} finally {
-			stopping = null;
+			busyId = null;
 		}
+	}
+
+	function copyText(text: string) {
+		navigator.clipboard?.writeText(text);
 	}
 
 	function beginAction(kind: View, id: number | string) {
@@ -146,7 +190,7 @@
 	}
 	function confirmAction(kind: View, id: number | string) {
 		if (kind === 'tcp') kill(id as number);
-		else stopContainer(id as string);
+		else containerDo(id as string, 'stop');
 	}
 
 	// ---- expand / detail ----
@@ -159,13 +203,16 @@
 		return expanded.includes(key);
 	}
 
-	async function loadDetail(key: string, kind: View, id: number | string) {
+	async function loadDetail(key: string, kind: Tab, id: number | string) {
 		details = { ...details, [key]: { loading: true, error: null, data: null } };
 		try {
+			const eid = encodeURIComponent(String(id));
 			const url =
 				kind === 'tcp'
 					? `/api/process?pid=${id}`
-					: `/api/docker/stats?id=${encodeURIComponent(String(id))}`;
+					: kind === 'docker'
+						? `/api/docker/stats?id=${eid}`
+						: `/api/docker/logs?id=${eid}&tail=200`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await readErrorMessage(res));
 			const data = await res.json();
@@ -178,7 +225,7 @@
 		}
 	}
 
-	function toggleExpand(key: string, kind: View, id: number | string) {
+	function toggleExpand(key: string, kind: Tab, id: number | string) {
 		if (isOpen(key)) {
 			expanded = expanded.filter((k) => k !== key);
 		} else {
@@ -187,7 +234,7 @@
 		}
 	}
 
-	function rowClick(e: MouseEvent, key: string, kind: View, id: number | string) {
+	function rowClick(e: MouseEvent, key: string, kind: Tab, id: number | string) {
 		if ((e.target as HTMLElement).closest('button')) return;
 		toggleExpand(key, kind, id);
 	}
@@ -198,13 +245,13 @@
 
 	// Per-row keys: ↑↓ / j k move focus, ↵ expands, x kills — when the row itself
 	// (not an inner button) holds focus.
-	function rowKey(e: KeyboardEvent, i: number, key: string, kind: View, id: number | string, locked: boolean) {
+	function rowKey(e: KeyboardEvent, i: number, key: string, kind: Tab, id: number | string, locked: boolean) {
 		if (e.target !== e.currentTarget) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			toggleExpand(key, kind, id);
 		} else if (e.key === 'x') {
-			if (!locked) {
+			if (kind !== 'containers' && !locked) {
 				e.preventDefault();
 				beginAction(kind, id);
 			}
@@ -283,9 +330,27 @@
 	</svg>
 {/snippet}
 
-{#snippet actionCell(a: { kind: View; id: number | string; locked: boolean })}
+{#snippet copyIcon()}
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
+	</svg>
+{/snippet}
+
+{#snippet restartIcon()}
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M3 12a9 9 0 1 0 2.6-6.4" /><path d="M3 4v5h5" />
+	</svg>
+{/snippet}
+
+{#snippet playIcon()}
+	<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+		<path d="M7 5v14l11-7z" />
+	</svg>
+{/snippet}
+
+{#snippet actionCell(a: { kind: View; id: number | string; locked: boolean; copy?: number })}
 	{@const active = a.kind === 'tcp' ? confirming === a.id : dconfirming === a.id}
-	{@const busy = a.kind === 'tcp' ? killing === a.id : stopping === a.id}
+	{@const busy = a.kind === 'tcp' ? killing === a.id : busyId === a.id}
 	<span class="cell actions">
 		{#if a.locked}
 			<span class="icon-btn locked" role="img" aria-label="Protected system process" data-tip="Protected — can’t kill">
@@ -306,6 +371,16 @@
 				</button>
 			</span>
 		{:else}
+			{#if a.copy != null}
+				<button class="icon-btn reveal" onclick={() => copyText('localhost:' + a.copy)} data-tip={'Copy localhost:' + a.copy} aria-label="Copy address">
+					{@render copyIcon()}
+				</button>
+			{/if}
+			{#if a.kind === 'docker'}
+				<button class="icon-btn reveal" onclick={() => containerDo(a.id as string, 'restart')} disabled={busy} data-tip="Restart container" aria-label="Restart container">
+					{@render restartIcon()}
+				</button>
+			{/if}
 			<button class="icon-btn danger reveal" onclick={() => beginAction(a.kind, a.id)} data-tip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'} aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}>
 				{#if a.kind === 'tcp'}{@render powerIcon()}{:else}{@render stopIcon()}{/if}
 			</button>
@@ -345,6 +420,48 @@
 	</div>
 {/snippet}
 
+{#snippet containerActions(c: ContainerInfo)}
+	{@const busy = busyId === c.id}
+	<span class="cell actions">
+		{#if dconfirming === c.id}
+			<span class="confirm">
+				<button class="kill-btn" onclick={() => containerDo(c.id, 'stop')} disabled={busy}>
+					{busy ? '…' : 'Stop'}
+				</button>
+				<button class="icon-btn" onclick={() => (dconfirming = null)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
+					{@render xIcon()}
+				</button>
+			</span>
+		{:else if c.running}
+			<button class="icon-btn reveal" onclick={() => containerDo(c.id, 'restart')} disabled={busy} data-tip="Restart" aria-label="Restart">
+				{@render restartIcon()}
+			</button>
+			<button class="icon-btn danger reveal" onclick={() => (dconfirming = c.id)} disabled={busy} data-tip="Stop" aria-label="Stop">
+				{@render stopIcon()}
+			</button>
+		{:else}
+			<button class="icon-btn go" onclick={() => containerDo(c.id, 'start')} disabled={busy} data-tip="Start" aria-label="Start">
+				{@render playIcon()}
+			</button>
+		{/if}
+	</span>
+{/snippet}
+
+{#snippet logsPanel(key: string)}
+	{@const d = details[key]}
+	<div class="detail logs">
+		{#if !d || d.loading}
+			<div class="logskel">
+				{#each [92, 74, 86, 60, 80] as w (w)}<span class="sk" style="width: {w}%; height: 9px"></span>{/each}
+			</div>
+		{:else if d.error}
+			<p class="detail-error">{d.error}</p>
+		{:else}
+			<pre class="logbox">{d.data?.logs || '(no output)'}</pre>
+		{/if}
+	</div>
+{/snippet}
+
 <div class="app">
 	<header class="topbar">
 		<div class="brand">
@@ -354,6 +471,7 @@
 		<nav class="views" aria-label="View">
 			<button class:on={view === 'tcp'} onclick={() => switchView('tcp')}>TCP</button>
 			<button class:on={view === 'docker'} onclick={() => switchView('docker')}>Docker</button>
+			<button class:on={view === 'containers'} onclick={() => switchView('containers')}>Containers</button>
 		</nav>
 		<div class="grow"></div>
 		<div class="stat" aria-live="polite">
@@ -361,6 +479,8 @@
 				<span class="n">{ports.length}</span> ports{#if riskyCount > 0}<span class="sep">·</span><span class="risky">{riskyCount} risky</span>{/if}
 			{:else if view === 'docker' && dockerReady && dockerAvailable}
 				<span class="n">{dports.length}</span> published
+			{:else if view === 'containers' && containersReady && containerAvail}
+				<span class="n">{runningContainers}</span> / {containers.length} up
 			{/if}
 		</div>
 		{#if updatedAt}<time class="clock">{updatedAt}</time>{/if}
@@ -453,7 +573,7 @@
 					{#if isOpen(key)}{@render detailPanel(key, 'tcp')}{/if}
 				{/each}
 			{/if}
-		{:else}
+		{:else if view === 'docker'}
 			<div class="row rhead rdocker" role="row">
 				<span class="cell"></span>
 				<span class="cell">Port</span>
@@ -502,10 +622,71 @@
 							<span class="scope dim">{scopeLabel(d.address)}</span>
 						</span>
 						<span class="cell map">→ {d.containerPort}/{d.protocol}</span>
-						{@render actionCell({ kind: 'docker', id: d.containerId, locked: false })}
+						{@render actionCell({ kind: 'docker', id: d.containerId, locked: false, copy: d.hostPort })}
 						<span class="cell chevcell">{@render chevron()}</span>
 					</div>
 					{#if isOpen(key)}{@render detailPanel(key, 'docker')}{/if}
+				{/each}
+			{/if}
+		{:else}
+			<div class="row rhead rcont" role="row">
+				<span class="cell"></span>
+				<span class="cell">Container</span>
+				<span class="cell ccol-image">Image</span>
+				<span class="cell ccol-status">Status</span>
+				<span class="cell dcol-internal">Ports</span>
+				<span class="cell"></span>
+				<span class="cell"></span>
+			</div>
+
+			{#if !containersReady}
+				{#each SKELETON_DOCKER_WIDTHS as w (w)}
+					<div class="row rcont sk-row" aria-hidden="true">
+						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
+						<span class="cell"><span class="sk" style="width: {w}%"></span></span>
+						<span class="cell"><span class="sk" style="width: 58px"></span></span>
+						<span class="cell"><span class="sk" style="width: 70px"></span></span>
+						<span class="cell"><span class="sk" style="width: 44px"></span></span>
+						<span class="cell"></span>
+						<span class="cell"></span>
+					</div>
+				{/each}
+			{:else if !containerAvail}
+				<div class="notice">
+					<p class="notice-t">Docker unavailable</p>
+					<p class="notice-b">{containerReason ?? 'Could not reach Docker.'}</p>
+					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.</p>
+				</div>
+			{:else if visibleContainers.length === 0}
+				<p class="empty">{filter ? 'No containers match the filter.' : 'No containers.'}</p>
+			{:else}
+				{#each visibleContainers as c, i (c.id)}
+					{@const key = 'cont:' + c.id}
+					{@const dotState = c.running ? (c.health === 'unhealthy' ? 'bad' : c.health === 'starting' ? 'warn' : 'ok') : 'off'}
+					{#if i === 0 || c.project !== visibleContainers[i - 1]?.project}
+						<div class="grouphead">{c.project ?? 'ungrouped'}</div>
+					{/if}
+					<div
+						class="row rcont"
+						class:open={isOpen(key)}
+						data-idx={i}
+						role="row"
+						tabindex="0"
+						onclick={(e) => rowClick(e, key, 'containers', c.id)}
+						onkeydown={(e) => rowKey(e, i, key, 'containers', c.id, false)}
+					>
+						<span class="cell"><span class="dot" data-state={dotState}></span></span>
+						<span class="cell proc">
+							<span class="cmd">{c.name}</span>
+							{#if c.service}<span class="scope">{c.service}</span>{/if}
+						</span>
+						<span class="cell image">{c.image}</span>
+						<span class="cell cstatus" class:up={c.running}>{c.status}</span>
+						<span class="cell cports">{c.ports}</span>
+						{@render containerActions(c)}
+						<span class="cell chevcell">{@render chevron()}</span>
+					</div>
+					{#if isOpen(key)}{@render logsPanel(key)}{/if}
 				{/each}
 			{/if}
 		{/if}
@@ -725,11 +906,14 @@
 		min-height: 40px;
 	}
 	.rtcp,
-	.rhead:not(.rdocker) {
+	.rhead:not(.rdocker):not(.rcont) {
 		grid-template-columns: 14px 54px minmax(0, 1fr) 50px 52px 62px 96px 20px;
 	}
 	.rdocker {
 		grid-template-columns: 14px 54px minmax(0, 1fr) 118px 96px 20px;
+	}
+	.rcont {
+		grid-template-columns: 14px minmax(0, 1.15fr) minmax(0, 0.85fr) 130px 96px 84px 20px;
 	}
 	.rhead {
 		min-height: 32px;
@@ -779,8 +963,73 @@
 	.dot[data-risk='system'] {
 		background: var(--danger);
 	}
-	.dot[data-risk='running'] {
+	.dot[data-risk='running'],
+	.dot[data-state='ok'] {
 		background: var(--ok);
+	}
+	.dot[data-state='warn'] {
+		background: var(--warn);
+	}
+	.dot[data-state='bad'] {
+		background: var(--danger);
+	}
+	.dot[data-state='off'] {
+		background: var(--faint);
+	}
+
+	/* ---- containers ---- */
+	.grouphead {
+		padding: 0.75rem 0.85rem 0.2rem 2.5rem;
+		font-size: 10.5px;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--faint);
+		font-weight: 600;
+	}
+	.image,
+	.cports {
+		font-family: var(--mono);
+		font-size: 11.5px;
+		color: var(--muted);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.cports {
+		color: var(--faint);
+	}
+	.cstatus {
+		font-size: 11.5px;
+		color: var(--faint);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.cstatus.up {
+		color: var(--muted);
+	}
+	.detail.logs {
+		padding: 0.4rem 0.85rem 0.85rem 2.5rem;
+	}
+	.logskel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.logbox {
+		margin: 0;
+		font-family: var(--mono);
+		font-size: 11px;
+		line-height: 1.55;
+		color: var(--muted);
+		white-space: pre-wrap;
+		word-break: break-all;
+		max-height: 300px;
+		overflow: auto;
+		background: var(--bg);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 0.6rem 0.7rem;
 	}
 
 	.port {
@@ -905,6 +1154,12 @@
 	.icon-btn.locked {
 		color: var(--faint);
 		cursor: not-allowed;
+	}
+	.icon-btn.go {
+		color: var(--ok);
+	}
+	.icon-btn.go:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--ok) 14%, transparent);
 	}
 	.confirm {
 		display: inline-flex;
@@ -1138,16 +1393,24 @@
 			border-inline: none;
 		}
 		.rtcp,
-		.rhead:not(.rdocker) {
+		.rhead:not(.rdocker):not(.rcont) {
 			grid-template-columns: 14px 48px minmax(0, 1fr) 92px 20px;
 		}
 		.rdocker {
 			grid-template-columns: 14px 48px minmax(0, 1fr) 92px 20px;
 		}
-		/* drop the numeric columns on small screens */
+		.rcont {
+			grid-template-columns: 14px minmax(0, 1fr) 84px 20px;
+		}
+		/* drop the secondary columns on small screens */
 		.cell.r,
 		.map,
-		.dcol-internal {
+		.dcol-internal,
+		.image,
+		.cstatus,
+		.cports,
+		.ccol-image,
+		.ccol-status {
 			display: none;
 		}
 		.clock,

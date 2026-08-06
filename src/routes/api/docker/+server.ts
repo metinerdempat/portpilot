@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
-import { listDockerPorts, stopContainer } from '$lib/server/docker';
+import { listDockerPorts, containerAction } from '$lib/server/docker';
+import type { ContainerAction } from '$lib/types';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async () => {
@@ -8,7 +9,7 @@ export const GET: RequestHandler = async () => {
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	let body: { id?: unknown };
+	let body: { id?: unknown; action?: unknown };
 	try {
 		body = await request.json();
 	} catch {
@@ -18,7 +19,11 @@ export const POST: RequestHandler = async ({ request }) => {
 	const id = typeof body.id === 'string' ? body.id : '';
 	if (!id) throw error(400, 'Container id is required.');
 
-	const outcome = await stopContainer(id);
+	// Defaults to 'stop' so the ports view (which sends only { id }) keeps working.
+	const action: ContainerAction =
+		body.action === 'start' || body.action === 'restart' ? body.action : 'stop';
+
+	const outcome = await containerAction(id, action);
 	if (!outcome.ok) {
 		throw error(500, outcome.message);
 	}

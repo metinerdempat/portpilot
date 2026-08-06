@@ -52,6 +52,35 @@ export type ContainerStats = {
 
 export type StopOutcome = { ok: true } | { ok: false; message: string };
 
+export type ContainerAction = 'start' | 'stop' | 'restart';
+
+export type ContainerInfo = {
+	id: string;
+	name: string;
+	image: string;
+	/** Raw docker state: running, exited, paused, created, restarting. */
+	state: string;
+	/** Human status line, e.g. "Up 3 hours (healthy)". */
+	status: string;
+	/** Parsed healthcheck result, if any. */
+	health: '' | 'healthy' | 'unhealthy' | 'starting';
+	/** Relative age, e.g. "3 hours ago". */
+	createdAt: string;
+	/** Compact published host→container ports, or "—" when none. */
+	ports: string;
+	/** Compose project label, if part of a stack. */
+	project?: string;
+	/** Compose service label. */
+	service?: string;
+	running: boolean;
+};
+
+export type ContainerListing = {
+	available: boolean;
+	reason?: string;
+	containers: ContainerInfo[];
+};
+
 export type ProcessInfo = {
 	pid: number;
 	ppid: number | null;

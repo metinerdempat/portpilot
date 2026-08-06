@@ -1,6 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { ContainerStats, DockerListing, DockerPort, StopOutcome } from '$lib/types';
+import type {
+	ContainerAction,
+	ContainerInfo,
+	ContainerListing,
+	ContainerStats,
+	DockerListing,
+	DockerPort,
+	StopOutcome
+} from '$lib/types';
 
 const run = promisify(execFile);
 
@@ -115,26 +123,130 @@ export async function getContainerStats(id: string): Promise<ContainerStats | nu
 	}
 }
 
+// execFile uses no shell, but reject ids that could be read as a flag ("-…").
+const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
 /**
- * Stop the container that publishes a port — the Docker equivalent of killing
- * the process behind a TCP port. `docker stop` is graceful: it sends SIGTERM to
- * the container's main process, then SIGKILL after a grace period.
+ * Start, stop or restart a container. `stop` / `restart` are graceful: SIGTERM
+ * to the main process, then SIGKILL after a grace period.
  */
-export async function stopContainer(id: string): Promise<StopOutcome> {
-	// execFile uses no shell, but reject ids that could be read as a flag ("-…").
-	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) {
-		return { ok: false, message: 'Invalid container id.' };
+export async function containerAction(id: string, action: ContainerAction): Promise<StopOutcome> {
+	if (!ID_RE.test(id)) return { ok: false, message: 'Invalid container id.' };
+	if (action !== 'start' && action !== 'stop' && action !== 'restart') {
+		return { ok: false, message: 'Invalid action.' };
 	}
 	try {
-		await run('docker', ['stop', id], { maxBuffer: 1024 * 1024 });
+		await run('docker', [action, id], { maxBuffer: 1024 * 1024 });
 		return { ok: true };
 	} catch (err) {
 		const e = err as { stderr?: string; message?: string };
 		return {
 			ok: false,
-			message: (e.stderr ?? '').toString().trim() || e.message || 'Failed to stop the container.'
+			message: (e.stderr ?? '').toString().trim() || e.message || `Failed to ${action} the container.`
 		};
 	}
+}
+
+/** Every container (running + stopped) with status, health and stack labels. */
+export async function listContainers(): Promise<ContainerListing> {
+	let stdout = '';
+	try {
+		const res = await run('docker', ['ps', '-a', '--no-trunc', '--format', '{{json .}}'], {
+			maxBuffer: 8 * 1024 * 1024
+		});
+		stdout = res.stdout;
+	} catch (err) {
+		return { available: false, reason: describeError(err), containers: [] };
+	}
+
+	const containers: ContainerInfo[] = [];
+	for (const line of stdout.split('\n')) {
+		if (!line) continue;
+		let r: Record<string, string>;
+		try {
+			r = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const state = r.State ?? '';
+		const status = r.Status ?? '';
+		containers.push({
+			id: r.ID ?? '',
+			name: r.Names ?? '',
+			image: r.Image ?? '',
+			state,
+			status,
+			health: parseHealth(status),
+			createdAt: r.RunningFor ?? r.CreatedAt ?? '',
+			ports: compactPublished(r.Ports ?? ''),
+			project: labelValue(r.Labels ?? '', 'com.docker.compose.project'),
+			service: labelValue(r.Labels ?? '', 'com.docker.compose.service'),
+			running: state ? state.toLowerCase() === 'running' : /^up\b/i.test(status)
+		});
+	}
+
+	// Keep compose stacks together, running containers first inside each.
+	containers.sort(
+		(a, b) =>
+			(a.project ?? '~').localeCompare(b.project ?? '~') ||
+			Number(b.running) - Number(a.running) ||
+			a.name.localeCompare(b.name)
+	);
+	return { available: true, containers };
+}
+
+/** Recent log lines for a container (best-effort tail). */
+export async function getContainerLogs(id: string, tail = 200): Promise<string | null> {
+	if (!ID_RE.test(id)) return null;
+	const n = Number.isInteger(tail) && tail > 0 && tail <= 2000 ? tail : 200;
+	try {
+		const { stdout, stderr } = await run('docker', ['logs', '--tail', String(n), id], {
+			maxBuffer: 4 * 1024 * 1024
+		});
+		return trimLogs((stdout ?? '') + (stderr ?? ''));
+	} catch (err) {
+		const e = err as { stdout?: string; stderr?: string };
+		const raw = (e.stdout ?? '') + (e.stderr ?? '');
+		return raw ? trimLogs(raw) : null;
+	}
+}
+
+function parseHealth(status: string): ContainerInfo['health'] {
+	if (/\(healthy\)/i.test(status)) return 'healthy';
+	if (/\(unhealthy\)/i.test(status)) return 'unhealthy';
+	if (/health: starting/i.test(status)) return 'starting';
+	return '';
+}
+
+function labelValue(labels: string, key: string): string | undefined {
+	for (const part of labels.split(',')) {
+		const eq = part.indexOf('=');
+		if (eq !== -1 && part.slice(0, eq) === key) return part.slice(eq + 1);
+	}
+	return undefined;
+}
+
+/** Docker "Ports" string → compact "5432, 6379" / "8080→80" published list. */
+function compactPublished(raw: string): string {
+	const seen = new Set<string>();
+	for (const part of raw.split(',')) {
+		const seg = part.trim();
+		if (!seg.includes('->')) continue;
+		const [left, right] = seg.split('->');
+		const rm = right.trim().match(/^(\d+)\//);
+		const li = left.lastIndexOf(':');
+		if (!rm || li === -1) continue;
+		const host = left.slice(li + 1);
+		if (!/^\d+$/.test(host)) continue;
+		seen.add(host === rm[1] ? host : `${host}→${rm[1]}`);
+	}
+	return seen.size ? [...seen].join(', ') : '—';
+}
+
+/** Strip ANSI escapes and cap length so a log peek stays lightweight. */
+function trimLogs(raw: string): string {
+	const clean = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+	return clean.length > 20000 ? clean.slice(-20000) : clean;
 }
 
 function describeError(err: unknown): string {
