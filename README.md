@@ -14,6 +14,7 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 
 - **Two views, one switch** — flip between the machine's **TCP ports** and **Docker's published ports**, rendered identically.
 - **Live list of listening ports** — port, process, PID, user and bind scope (`localhost` vs. exposed to the network).
+- **Expand any row** for live technical details — a TCP process shows CPU %, resident memory, uptime, parent PID and its full command line; a container shows CPU, memory, network and disk I/O, and process count. Fetched on demand when you open the row.
 - **Docker port map** — every running container's `host → container` port mapping, with image and scope.
 - **Stop a container** — free a Docker-held port straight from the list with `docker stop` (graceful), behind the same confirm step.
 - **Risk warnings** — flags processes that are dangerous to kill (system daemons like `ControlCenter` / `rapportd`, privileged ports below 1024, root- or other-user-owned) with a `system` / `dikkat` marker and a header count, so you don't take down something important by mistake.
@@ -26,9 +27,11 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 
 ```
 Browser (Svelte UI)  ──fetch──▶  SvelteKit server endpoints  ──▶  OS
-   +page.svelte                   /api/ports   → lsof
-                                  /api/kill    → process.kill(pid, signal)
-                                  /api/docker  → docker ps
+   +page.svelte                   /api/ports         → lsof
+                                  /api/kill          → process.kill(pid, signal)
+                                  /api/docker        → docker ps / docker stop
+                                  /api/process       → ps  (per-process details)
+                                  /api/docker/stats  → docker stats
 ```
 
 Listing ports comes down to reading the kernel's open-file table via `lsof`:

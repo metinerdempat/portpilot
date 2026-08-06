@@ -23,6 +23,11 @@
 	}
 
 	type View = 'tcp' | 'docker';
+	type Detail = {
+		loading: boolean;
+		error: string | null;
+		data: Record<string, string | number | null> | null;
+	};
 
 	let view = $state<View>('tcp');
 
@@ -40,6 +45,10 @@
 	let dockerReason = $state<string | null>(null);
 	let dconfirming = $state<string | null>(null); // container id awaiting confirmation
 	let stopping = $state<string | null>(null); // container id currently stopping
+
+	// ---- expand / detail ----
+	let expanded = $state<string[]>([]);
+	let details = $state<Record<string, Detail>>({});
 
 	// ---- shared ----
 	let error = $state<string | null>(null);
@@ -129,6 +138,7 @@
 		view = v;
 		confirming = null;
 		dconfirming = null;
+		expanded = [];
 		error = null;
 		refresh();
 	}
@@ -169,6 +179,55 @@
 		}
 	}
 
+	// ---- expand / detail ----
+	function isOpen(key: string) {
+		return expanded.includes(key);
+	}
+
+	async function loadDetail(key: string, kind: View, id: number | string) {
+		details = { ...details, [key]: { loading: true, error: null, data: null } };
+		try {
+			const url =
+				kind === 'tcp'
+					? `/api/process?pid=${id}`
+					: `/api/docker/stats?id=${encodeURIComponent(String(id))}`;
+			const res = await fetch(url);
+			if (!res.ok) throw new Error(await readError(res));
+			const data = await res.json();
+			details = { ...details, [key]: { loading: false, error: null, data } };
+		} catch (e) {
+			details = {
+				...details,
+				[key]: { loading: false, error: e instanceof Error ? e.message : 'Detay alınamadı.', data: null }
+			};
+		}
+	}
+
+	function toggleExpand(key: string, kind: View, id: number | string) {
+		if (isOpen(key)) {
+			expanded = expanded.filter((k) => k !== key);
+		} else {
+			expanded = [...expanded, key];
+			loadDetail(key, kind, id); // fresh snapshot each time it opens
+		}
+	}
+
+	// Row click is a mouse convenience; clicks on any inner button (chevron or
+	// the action buttons) are left to that button. Keyboard users reach the
+	// accessible chevron button instead.
+	function onRowClick(e: MouseEvent, key: string, kind: View, id: number | string) {
+		if ((e.target as HTMLElement).closest('button')) return;
+		toggleExpand(key, kind, id);
+	}
+
+	function onRowKey(e: KeyboardEvent, key: string, kind: View, id: number | string) {
+		if (e.target !== e.currentTarget) return; // ignore keys bubbling up from action buttons
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			toggleExpand(key, kind, id);
+		}
+	}
+
 	onMount(refresh);
 
 	// Poll the active view while auto-refresh is on.
@@ -178,6 +237,70 @@
 		return () => clearInterval(id);
 	});
 </script>
+
+{#snippet chevron()}
+	<svg class="ic-chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="M9 5l7 7-7 7" />
+	</svg>
+{/snippet}
+
+{#snippet powerIcon()}
+	<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+		<path d="M12 4v8" />
+		<path d="M7.6 7.2a7 7 0 1 0 8.8 0" />
+	</svg>
+{/snippet}
+
+{#snippet stopIcon()}
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+		<rect x="6" y="6" width="12" height="12" rx="2.5" />
+	</svg>
+{/snippet}
+
+{#snippet xIcon()}
+	<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+		<path d="M6 6l12 12M18 6L6 18" />
+	</svg>
+{/snippet}
+
+{#snippet detail(key: string, kind: View)}
+	{@const d = details[key]}
+	<div class="detail">
+		{#if !d || d.loading}
+			<dl class="facts">
+				{#each [64, 88, 72, 96] as w (w)}
+					<div>
+						<dt><span class="sk" style="width: 42px; height: 8px"></span></dt>
+						<dd><span class="sk" style="width: {w}px; height: 9px"></span></dd>
+					</div>
+				{/each}
+			</dl>
+		{:else if d.error}
+			<p class="detail-error">{d.error}</p>
+		{:else if kind === 'tcp' && d.data}
+			{@const x = d.data}
+			<dl class="facts">
+				<div><dt>CPU</dt><dd>{x.cpu}%</dd></div>
+				<div><dt>Bellek</dt><dd>{x.rssMb} MB · %{x.mem}</dd></div>
+				<div><dt>Çalışma süresi</dt><dd>{x.uptime}</dd></div>
+				<div><dt>Üst süreç</dt><dd>PID {x.ppid}</dd></div>
+			</dl>
+			<div class="cmdline">
+				<span>Tam komut</span>
+				<code>{x.command}</code>
+			</div>
+		{:else if d.data}
+			{@const x = d.data}
+			<dl class="facts">
+				<div><dt>CPU</dt><dd>{x.cpu}</dd></div>
+				<div><dt>Bellek</dt><dd>{x.mem} · {x.memPerc}</dd></div>
+				<div><dt>Ağ G/Ç</dt><dd>{x.net}</dd></div>
+				<div><dt>Disk G/Ç</dt><dd>{x.block}</dd></div>
+				<div><dt>Süreç sayısı</dt><dd>{x.pids}</dd></div>
+			</dl>
+		{/if}
+	</div>
+{/snippet}
 
 <svelte:head>
 	<title>portpilot — portlar & docker</title>
@@ -227,7 +350,7 @@
 					<input type="checkbox" bind:checked={autoRefresh} />
 					Otomatik yenile
 				</label>
-				<button class="btn" onclick={refresh}>Yenile</button>
+				<button class="refresh" onclick={refresh}>Yenile</button>
 			</div>
 		</div>
 	</header>
@@ -240,6 +363,7 @@
 		{#if !portsReady}
 			<div class="table" aria-busy="true" aria-label="Portlar yükleniyor">
 				<div class="row row-tcp head" role="row">
+					<span></span>
 					<span>Port</span>
 					<span>Süreç</span>
 					<span class="num pid">PID</span>
@@ -248,11 +372,12 @@
 				</div>
 				{#each [46, 58, 40, 64, 50, 42, 60, 48] as w (w)}
 					<div class="row row-tcp sk-row" aria-hidden="true">
-						<span><span class="sk sk-lg" style="width: 44px"></span></span>
+						<span></span>
+						<span><span class="sk sk-lg" style="width: 40px"></span></span>
 						<span><span class="sk" style="width: {w}%"></span></span>
 						<span class="num pid"><span class="sk" style="width: 42px"></span></span>
-						<span class="col-user"><span class="sk" style="width: 76px"></span></span>
-						<span class="action"><span class="sk sk-btn"></span></span>
+						<span class="col-user"><span class="sk" style="width: 74px"></span></span>
+						<span class="action"><span class="sk sk-act"></span></span>
 					</div>
 				{/each}
 			</div>
@@ -261,15 +386,30 @@
 		{:else}
 			<div class="table" role="table" aria-label="Aktif TCP portları">
 				<div class="row row-tcp head" role="row">
-					<span role="columnheader">Port</span>
-					<span role="columnheader">Süreç</span>
-					<span class="num pid" role="columnheader">PID</span>
-					<span class="col-user" role="columnheader">Kullanıcı</span>
-					<span role="columnheader"></span>
+					<span></span>
+					<span>Port</span>
+					<span>Süreç</span>
+					<span class="num pid">PID</span>
+					<span class="col-user">Kullanıcı</span>
+					<span></span>
 				</div>
 
 				{#each ports as p (p.pid + ':' + p.port)}
-					<div class="row row-tcp" role="row" data-risk={p.risk}>
+					{@const key = 'tcp:' + p.pid + ':' + p.port}
+					<div
+						class="row row-tcp"
+						class:open={isOpen(key)}
+						data-risk={p.risk}
+						role="row"
+						tabindex="0"
+						aria-expanded={isOpen(key)}
+						onclick={(e) => onRowClick(e, key, 'tcp', p.pid)}
+						onkeydown={(e) => onRowKey(e, key, 'tcp', p.pid)}
+					>
+						<span class="chev-cell" role="cell" aria-hidden="true">
+							{@render chevron()}
+						</span>
+
 						<span class="port" role="cell">{p.port}</span>
 
 						<span class="proc" role="cell">
@@ -288,31 +428,48 @@
 
 						<span class="action" role="cell">
 							{#if confirming === p.pid}
-								<button class="btn danger" onclick={() => kill(p.pid)} disabled={killing === p.pid}>
-									{killing === p.pid ? 'Kapatılıyor…' : 'Onayla'}
-								</button>
-								<button class="btn ghost" onclick={() => (confirming = null)} disabled={killing === p.pid}>
-									Vazgeç
-								</button>
-								<button
-									class="force"
-									onclick={() => kill(p.pid, true)}
-									disabled={killing === p.pid}
-									title="SIGKILL — anında ve zorla sonlandırır"
-								>
-									zorla (-9)
-								</button>
+								<span class="confirm">
+									<button class="act-yes" onclick={() => kill(p.pid)} disabled={killing === p.pid}>
+										{killing === p.pid ? '…' : 'Kapat'}
+									</button>
+									<button
+										class="act-force"
+										onclick={() => kill(p.pid, true)}
+										disabled={killing === p.pid}
+										title="SIGKILL — anında ve zorla">zorla</button
+									>
+									<button
+										class="act-cancel"
+										onclick={() => (confirming = null)}
+										disabled={killing === p.pid}
+										aria-label="Vazgeç"
+										title="Vazgeç"
+									>
+										{@render xIcon()}
+									</button>
+								</span>
 							{:else}
-								<button class="btn kill" onclick={() => (confirming = p.pid)}>Kapat</button>
+								<button
+									class="act act-danger"
+									onclick={() => (confirming = p.pid)}
+									aria-label="Portu kapat"
+									title="Portu kapat (süreci sonlandır)"
+								>
+									{@render powerIcon()}
+								</button>
 							{/if}
 						</span>
 					</div>
+					{#if isOpen(key)}
+						{@render detail(key, 'tcp')}
+					{/if}
 				{/each}
 			</div>
 		{/if}
 	{:else if !dockerReady}
 		<div class="table" aria-busy="true" aria-label="Docker portları yükleniyor">
 			<div class="row row-docker head" role="row">
+				<span></span>
 				<span>Port</span>
 				<span>Konteyner</span>
 				<span class="num inner">İç Port</span>
@@ -320,10 +477,11 @@
 			</div>
 			{#each [54, 44, 60, 48, 52] as w (w)}
 				<div class="row row-docker sk-row" aria-hidden="true">
-					<span><span class="sk sk-lg" style="width: 44px"></span></span>
+					<span></span>
+					<span><span class="sk sk-lg" style="width: 40px"></span></span>
 					<span><span class="sk" style="width: {w}%"></span></span>
-					<span class="num inner"><span class="sk" style="width: 62px"></span></span>
-					<span class="action"><span class="sk sk-btn"></span></span>
+					<span class="num inner"><span class="sk" style="width: 60px"></span></span>
+					<span class="action"><span class="sk sk-act"></span></span>
 				</div>
 			{/each}
 		</div>
@@ -340,14 +498,28 @@
 	{:else}
 		<div class="table" role="table" aria-label="Docker portları">
 			<div class="row row-docker head" role="row">
-				<span role="columnheader">Port</span>
-				<span role="columnheader">Konteyner</span>
-				<span class="num inner" role="columnheader">İç Port</span>
-				<span role="columnheader"></span>
+				<span></span>
+				<span>Port</span>
+				<span>Konteyner</span>
+				<span class="num inner">İç Port</span>
+				<span></span>
 			</div>
 
 			{#each dports as d (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
-				<div class="row row-docker" role="row">
+				{@const key = 'docker:' + d.containerId + ':' + d.hostPort + ':' + d.protocol}
+				<div
+					class="row row-docker"
+					class:open={isOpen(key)}
+					role="row"
+					tabindex="0"
+					aria-expanded={isOpen(key)}
+					onclick={(e) => onRowClick(e, key, 'docker', d.containerId)}
+					onkeydown={(e) => onRowKey(e, key, 'docker', d.containerId)}
+				>
+					<span class="chev-cell" role="cell" aria-hidden="true">
+						{@render chevron()}
+					</span>
+
 					<span class="port" role="cell">{d.hostPort}</span>
 
 					<span class="proc" role="cell">
@@ -361,31 +533,39 @@
 
 					<span class="action" role="cell">
 						{#if dconfirming === d.containerId}
-							<button
-								class="btn danger"
-								onclick={() => stopContainer(d.containerId)}
-								disabled={stopping === d.containerId}
-							>
-								{stopping === d.containerId ? 'Durduruluyor…' : 'Onayla'}
-							</button>
-							<button
-								class="btn ghost"
-								onclick={() => (dconfirming = null)}
-								disabled={stopping === d.containerId}
-							>
-								Vazgeç
-							</button>
+							<span class="confirm">
+								<button
+									class="act-yes"
+									onclick={() => stopContainer(d.containerId)}
+									disabled={stopping === d.containerId}
+								>
+									{stopping === d.containerId ? '…' : 'Durdur'}
+								</button>
+								<button
+									class="act-cancel"
+									onclick={() => (dconfirming = null)}
+									disabled={stopping === d.containerId}
+									aria-label="Vazgeç"
+									title="Vazgeç"
+								>
+									{@render xIcon()}
+								</button>
+							</span>
 						{:else}
 							<button
-								class="btn kill"
+								class="act act-danger"
 								onclick={() => (dconfirming = d.containerId)}
-								title="Konteyneri durdurur — bu portu boşaltır"
+								aria-label="Konteyneri durdur"
+								title="Konteyneri durdur (portu boşaltır)"
 							>
-								Durdur
+								{@render stopIcon()}
 							</button>
 						{/if}
 					</span>
 				</div>
+				{#if isOpen(key)}
+					{@render detail(key, 'docker')}
+				{/if}
 			{/each}
 		</div>
 	{/if}
@@ -393,9 +573,9 @@
 	<footer>
 		<span>Yerelde çalışır · <code>lsof</code> + <code>docker</code></span>
 		{#if view === 'tcp'}
-			<span>Onayla = SIGTERM (nazik) · zorla = SIGKILL (sert)</span>
+			<span>Satıra tıkla → kaynak & teknik bilgi · <code>⏻</code> = kapat</span>
 		{:else}
-			<span>Durdur = <code>docker stop</code> · host → konteyner eşlemesi</span>
+			<span>Satıra tıkla → istatistikler · <code>◼</code> = konteyneri durdur</span>
 		{/if}
 	</footer>
 </main>
@@ -501,64 +681,20 @@
 	.toggle input {
 		accent-color: var(--text);
 	}
-
-	/* ---- buttons ---- */
-	.btn {
+	.refresh {
 		background: var(--surface);
 		color: var(--text);
 		border: 1px solid var(--line-strong);
 		border-radius: 6px;
 		padding: 0.4rem 0.85rem;
 		font-size: 0.875rem;
-		line-height: 1.2;
-		transition: border-color 0.15s, background 0.15s, color 0.15s, opacity 0.15s;
+		transition: border-color 0.15s;
 	}
-	.btn:hover:not(:disabled) {
+	.refresh:hover {
 		border-color: var(--text);
 	}
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-	.btn.kill {
-		color: var(--muted);
-		border-color: var(--line);
-	}
-	.btn.kill:hover:not(:disabled) {
-		color: var(--danger);
-		border-color: var(--danger);
-	}
-	.btn.danger {
-		background: var(--danger);
-		border-color: var(--danger);
-		color: #fff;
-	}
-	.btn.danger:hover:not(:disabled) {
-		background: var(--danger-strong);
-		border-color: var(--danger-strong);
-	}
-	.btn.ghost {
-		border-color: var(--line);
-		color: var(--muted);
-	}
-	.force {
-		background: none;
-		border: none;
-		padding: 0.2rem;
-		font-size: 0.78rem;
-		color: var(--faint);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-	.force:hover:not(:disabled) {
-		color: var(--danger);
-	}
-	.force:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
 
-	/* ---- table (shared) ---- */
+	/* ---- table ---- */
 	.table {
 		margin-top: 0.25rem;
 	}
@@ -566,14 +702,14 @@
 		display: grid;
 		align-items: center;
 		gap: 1rem;
-		padding: 0.85rem 0.25rem;
+		padding: 0.8rem 0.25rem;
 		border-bottom: 1px solid var(--line);
 	}
 	.row-tcp {
-		grid-template-columns: 74px minmax(0, 1fr) 76px 104px 168px;
+		grid-template-columns: 24px 62px minmax(0, 1fr) 66px 88px 132px;
 	}
 	.row-docker {
-		grid-template-columns: 74px minmax(0, 1fr) 116px 140px;
+		grid-template-columns: 24px 62px minmax(0, 1fr) 116px 118px;
 	}
 	.row.head {
 		padding-top: 0.75rem;
@@ -584,8 +720,47 @@
 		letter-spacing: 0.09em;
 		color: var(--faint);
 	}
-	.row:not(.head):hover {
+	.row:not(.head):not(.sk-row) {
+		cursor: pointer;
+	}
+	.row:not(.head):not(.sk-row):hover {
 		background: color-mix(in srgb, var(--text) 3.5%, transparent);
+	}
+	.row.open {
+		border-bottom-color: transparent;
+		background: color-mix(in srgb, var(--text) 3.5%, transparent);
+	}
+
+	/* bigger risk accent bar */
+	.row[data-risk='system'] {
+		box-shadow: inset 4px 0 0 var(--danger);
+	}
+	.row[data-risk='caution'] {
+		box-shadow: inset 4px 0 0 var(--warn);
+	}
+
+	/* chevron */
+	.chev-cell {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--faint);
+		transition: color 0.15s;
+	}
+	.row:hover .chev-cell,
+	.row:focus-visible .chev-cell {
+		color: var(--muted);
+	}
+	.ic-chev {
+		transition: transform 0.18s ease;
+	}
+	.row.open .ic-chev {
+		transform: rotate(90deg);
+	}
+	.row:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+		border-radius: 4px;
 	}
 
 	.port {
@@ -634,6 +809,13 @@
 		color: var(--faint);
 		font-family: var(--mono);
 	}
+	.user {
+		color: var(--muted);
+		font-size: 0.875rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
 
 	/* risk markers */
 	.risk-tag {
@@ -649,27 +831,157 @@
 	.risk-caution {
 		color: var(--warn);
 	}
-	.row[data-risk='system'] {
-		box-shadow: inset 2px 0 0 var(--danger);
-	}
-	.row[data-risk='caution'] {
-		box-shadow: inset 2px 0 0 var(--warn);
-	}
-	.user {
-		color: var(--muted);
-		font-size: 0.875rem;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
+
+	/* ---- actions ---- */
 	.action {
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: 0.5rem;
+		gap: 0.4rem;
+	}
+	.act {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		border: none;
+		background: none;
+		border-radius: 8px;
+		color: var(--faint);
+		padding: 0;
+		transition: color 0.15s, background 0.15s;
+	}
+	.row:hover .act {
+		color: var(--muted);
+	}
+	.act-danger:hover {
+		color: var(--danger);
+		background: color-mix(in srgb, var(--danger) 11%, transparent);
+	}
+	.confirm {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+	.act-yes {
+		border: none;
+		background: var(--danger);
+		color: #fff;
+		border-radius: 6px;
+		padding: 0.34rem 0.7rem;
+		font-size: 0.82rem;
+		font-weight: 500;
+		transition: background 0.15s, opacity 0.15s;
+	}
+	.act-yes:hover:not(:disabled) {
+		background: var(--danger-strong);
+	}
+	.act-yes:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.act-force {
+		border: none;
+		background: none;
+		color: var(--faint);
+		font-size: 0.72rem;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+		padding: 2px;
+	}
+	.act-force:hover:not(:disabled) {
+		color: var(--danger);
+	}
+	.act-force:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.act-cancel {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 26px;
+		border: none;
+		background: none;
+		border-radius: 6px;
+		color: var(--muted);
+		padding: 0;
+		transition: color 0.15s, background 0.15s;
+	}
+	.act-cancel:hover:not(:disabled) {
+		color: var(--text);
+		background: color-mix(in srgb, var(--text) 8%, transparent);
 	}
 
-	/* skeleton loading — mirrors the real row layout */
+	/* ---- detail panel ---- */
+	.detail {
+		padding: 0.4rem 0.5rem 1.1rem 2.35rem;
+		border-bottom: 1px solid var(--line);
+		background: color-mix(in srgb, var(--text) 3.5%, transparent);
+		animation: detail-in 0.16s ease;
+	}
+	@keyframes detail-in {
+		from {
+			opacity: 0;
+			transform: translateY(-3px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	.facts {
+		margin: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 0.7rem 1.5rem;
+	}
+	.facts div {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+	.facts dt {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--faint);
+	}
+	.facts dd {
+		margin: 0;
+		font-family: var(--mono);
+		font-size: 0.85rem;
+		color: var(--text);
+	}
+	.cmdline {
+		margin-top: 0.9rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+	.cmdline span {
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--faint);
+	}
+	.cmdline code {
+		font-family: var(--mono);
+		font-size: 0.8rem;
+		color: var(--muted);
+		word-break: break-all;
+		line-height: 1.55;
+	}
+	.detail-error {
+		margin: 0;
+		color: var(--danger);
+		font-size: 0.85rem;
+	}
+
+	/* ---- skeleton ---- */
 	.sk-row {
 		pointer-events: none;
 	}
@@ -685,10 +997,10 @@
 	.sk-lg {
 		height: 15px;
 	}
-	.sk-btn {
-		width: 58px;
-		height: 30px;
-		border-radius: 6px;
+	.sk-act {
+		width: 32px;
+		height: 32px;
+		border-radius: 8px;
 	}
 	@keyframes sk-shimmer {
 		0% {
@@ -699,8 +1011,11 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.sk {
+		.sk,
+		.detail,
+		.ic-chev {
 			animation: none;
+			transition: none;
 		}
 	}
 
@@ -766,15 +1081,18 @@
 
 	@media (max-width: 620px) {
 		.row-tcp {
-			grid-template-columns: 60px minmax(0, 1fr) 132px;
+			grid-template-columns: 24px 54px minmax(0, 1fr) 118px;
 		}
 		.row-docker {
-			grid-template-columns: 60px minmax(0, 1fr) 116px;
+			grid-template-columns: 24px 54px minmax(0, 1fr) 104px;
 		}
 		.col-user,
 		.pid,
 		.inner {
 			display: none;
+		}
+		.detail {
+			padding-left: 1rem;
 		}
 	}
 </style>

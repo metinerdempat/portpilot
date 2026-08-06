@@ -106,6 +106,50 @@ function parsePortField(
 	return out;
 }
 
+export interface ContainerStats {
+	/** CPU usage, e.g. "0.15%". */
+	cpu: string;
+	/** Memory usage, e.g. "45MiB / 2GiB". */
+	mem: string;
+	/** Memory percentage, e.g. "2.2%". */
+	memPerc: string;
+	/** Network I/O, e.g. "1.2kB / 3.4kB". */
+	net: string;
+	/** Block (disk) I/O. */
+	block: string;
+	/** Number of processes/threads in the container. */
+	pids: string;
+}
+
+/** Live resource usage for one container, via `docker stats --no-stream`. */
+export async function getContainerStats(id: string): Promise<ContainerStats | null> {
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) return null;
+	try {
+		const { stdout } = await run(
+			'docker',
+			['stats', '--no-stream', '--format', '{{json .}}', id],
+			{ maxBuffer: 1024 * 1024 }
+		);
+		const line = stdout
+			.split('\n')
+			.map((l) => l.trim())
+			.filter(Boolean)[0];
+		if (!line) return null;
+
+		const j = JSON.parse(line) as Record<string, string>;
+		return {
+			cpu: j.CPUPerc ?? '—',
+			mem: j.MemUsage ?? '—',
+			memPerc: j.MemPerc ?? '—',
+			net: j.NetIO ?? '—',
+			block: j.BlockIO ?? '—',
+			pids: j.PIDs ?? '—'
+		};
+	} catch {
+		return null;
+	}
+}
+
 export type StopOutcome = { ok: true } | { ok: false; message: string };
 
 /**
