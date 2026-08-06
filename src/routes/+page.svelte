@@ -79,13 +79,13 @@
 	};
 
 	function scope(address: string): string {
-		if (address === '127.0.0.1' || address === '::1') return 'yalnız localhost';
-		if (address === '*' || address === '0.0.0.0' || address === '::') return 'ağa açık';
+		if (address === '127.0.0.1' || address === '::1') return 'localhost only';
+		if (address === '*' || address === '0.0.0.0' || address === '::') return 'exposed';
 		return address;
 	}
 
 	function stamp() {
-		updatedAt = new Date().toLocaleTimeString('tr-TR');
+		updatedAt = new Date().toLocaleTimeString('en-GB');
 	}
 
 	async function readError(res: Response): Promise<string> {
@@ -95,7 +95,7 @@
 		} catch {
 			/* not JSON */
 		}
-		return `Beklenmeyen hata (${res.status})`;
+		return `Unexpected error (${res.status})`;
 	}
 
 	async function loadPorts() {
@@ -106,7 +106,7 @@
 			error = null;
 			stamp();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Portlar okunamadı.';
+			error = e instanceof Error ? e.message : 'Failed to read ports.';
 		} finally {
 			portsReady = true;
 		}
@@ -123,7 +123,7 @@
 			error = null;
 			stamp();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Docker okunamadı.';
+			error = e instanceof Error ? e.message : 'Failed to read Docker.';
 		} finally {
 			dockerReady = true;
 		}
@@ -155,7 +155,7 @@
 			confirming = null;
 			await loadPorts();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Süreç sonlandırılamadı.';
+			error = e instanceof Error ? e.message : 'Failed to terminate the process.';
 		} finally {
 			killing = null;
 		}
@@ -173,7 +173,7 @@
 			dconfirming = null;
 			await loadDocker();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Konteyner durdurulamadı.';
+			error = e instanceof Error ? e.message : 'Failed to stop the container.';
 		} finally {
 			stopping = null;
 		}
@@ -198,7 +198,7 @@
 		} catch (e) {
 			details = {
 				...details,
-				[key]: { loading: false, error: e instanceof Error ? e.message : 'Detay alınamadı.', data: null }
+				[key]: { loading: false, error: e instanceof Error ? e.message : 'Failed to load details.', data: null }
 			};
 		}
 	}
@@ -281,29 +281,29 @@
 			{@const x = d.data}
 			<dl class="facts">
 				<div><dt>CPU</dt><dd>{x.cpu}%</dd></div>
-				<div><dt>Bellek</dt><dd>{x.rssMb} MB · %{x.mem}</dd></div>
-				<div><dt>Çalışma süresi</dt><dd>{x.uptime}</dd></div>
-				<div><dt>Üst süreç</dt><dd>PID {x.ppid}</dd></div>
+				<div><dt>Memory</dt><dd>{x.rssMb} MB · {x.mem}%</dd></div>
+				<div><dt>Uptime</dt><dd>{x.uptime}</dd></div>
+				<div><dt>Parent</dt><dd>PID {x.ppid}</dd></div>
 			</dl>
 			<div class="cmdline">
-				<span>Tam komut</span>
+				<span>Full command</span>
 				<code>{x.command}</code>
 			</div>
 		{:else if d.data}
 			{@const x = d.data}
 			<dl class="facts">
 				<div><dt>CPU</dt><dd>{x.cpu}</dd></div>
-				<div><dt>Bellek</dt><dd>{x.mem} · {x.memPerc}</dd></div>
-				<div><dt>Ağ G/Ç</dt><dd>{x.net}</dd></div>
-				<div><dt>Disk G/Ç</dt><dd>{x.block}</dd></div>
-				<div><dt>Süreç sayısı</dt><dd>{x.pids}</dd></div>
+				<div><dt>Memory</dt><dd>{x.mem} · {x.memPerc}</dd></div>
+				<div><dt>Network I/O</dt><dd>{x.net}</dd></div>
+				<div><dt>Disk I/O</dt><dd>{x.block}</dd></div>
+				<div><dt>Processes</dt><dd>{x.pids}</dd></div>
 			</dl>
 		{/if}
 	</div>
 {/snippet}
 
 <svelte:head>
-	<title>portpilot — portlar & docker</title>
+	<title>portpilot — ports & docker</title>
 </svelte:head>
 
 <main>
@@ -313,17 +313,18 @@
 			<h1>portpilot</h1>
 		</div>
 		<p class="sub">
-			Bilgisayarında dinlenen TCP portları ile Docker’ın yayınladığı portlar — aynı yerde.
+			The TCP ports your machine is listening on, plus the ports your Docker containers publish — all
+			in one place.
 		</p>
 
-		<div class="tabs" role="tablist" aria-label="Görünüm">
+		<div class="tabs" role="tablist" aria-label="View">
 			<button
 				role="tab"
 				aria-selected={view === 'tcp'}
 				class:active={view === 'tcp'}
 				onclick={() => switchView('tcp')}
 			>
-				TCP Portları
+				TCP Ports
 			</button>
 			<button
 				role="tab"
@@ -331,26 +332,26 @@
 				class:active={view === 'docker'}
 				onclick={() => switchView('docker')}
 			>
-				Docker Portları
+				Docker Ports
 			</button>
 		</div>
 
 		<div class="toolbar">
 			<div class="count">
 				{#if view === 'tcp' && portsReady}
-					<strong>{ports.length}</strong> aktif port
-					{#if riskyCount > 0}<span class="risky-note"> · {riskyCount} riskli</span>{/if}
+					<strong>{ports.length}</strong> active ports
+					{#if riskyCount > 0}<span class="risky-note"> · {riskyCount} risky</span>{/if}
 				{:else if view === 'docker' && dockerReady && dockerAvailable}
-					<strong>{dports.length}</strong> yayınlanan port
+					<strong>{dports.length}</strong> published
 				{/if}
 				{#if updatedAt}<span class="stamp">· {updatedAt}</span>{/if}
 			</div>
 			<div class="controls">
 				<label class="toggle">
 					<input type="checkbox" bind:checked={autoRefresh} />
-					Otomatik yenile
+					Auto-refresh
 				</label>
-				<button class="refresh" onclick={refresh}>Yenile</button>
+				<button class="refresh" onclick={refresh}>Refresh</button>
 			</div>
 		</div>
 	</header>
@@ -361,13 +362,13 @@
 
 	{#if view === 'tcp'}
 		{#if !portsReady}
-			<div class="table" aria-busy="true" aria-label="Portlar yükleniyor">
+			<div class="table" aria-busy="true" aria-label="Loading ports">
 				<div class="row row-tcp head" role="row">
 					<span></span>
 					<span>Port</span>
-					<span>Süreç</span>
+					<span>Process</span>
 					<span class="num pid">PID</span>
-					<span class="col-user">Kullanıcı</span>
+					<span class="col-user">User</span>
 					<span></span>
 				</div>
 				{#each [46, 58, 40, 64, 50, 42, 60, 48] as w (w)}
@@ -382,15 +383,15 @@
 				{/each}
 			</div>
 		{:else if ports.length === 0}
-			<p class="state">Dinlenen TCP portu yok. Her şey sessiz.</p>
+			<p class="state">No listening TCP ports. All quiet.</p>
 		{:else}
-			<div class="table" role="table" aria-label="Aktif TCP portları">
+			<div class="table" role="table" aria-label="Active TCP ports">
 				<div class="row row-tcp head" role="row">
 					<span></span>
 					<span>Port</span>
-					<span>Süreç</span>
+					<span>Process</span>
 					<span class="num pid">PID</span>
-					<span class="col-user">Kullanıcı</span>
+					<span class="col-user">User</span>
 					<span></span>
 				</div>
 
@@ -418,7 +419,7 @@
 							<span class="addr">{scope(p.address)}</span>
 							{#if p.risk !== 'safe'}
 								<span class="risk-tag risk-{p.risk}" title={p.riskNote}>
-									{p.risk === 'system' ? 'sistem' : 'dikkat'}
+									{p.risk === 'system' ? 'system' : 'caution'}
 								</span>
 							{/if}
 						</span>
@@ -430,20 +431,20 @@
 							{#if confirming === p.pid}
 								<span class="confirm">
 									<button class="act-yes" onclick={() => kill(p.pid)} disabled={killing === p.pid}>
-										{killing === p.pid ? '…' : 'Kapat'}
+										{killing === p.pid ? '…' : 'Kill'}
 									</button>
 									<button
 										class="act-force"
 										onclick={() => kill(p.pid, true)}
 										disabled={killing === p.pid}
-										title="SIGKILL — anında ve zorla">zorla</button
+										title="SIGKILL — immediate & forced">force</button
 									>
 									<button
 										class="act-cancel"
 										onclick={() => (confirming = null)}
 										disabled={killing === p.pid}
-										aria-label="Vazgeç"
-										title="Vazgeç"
+										aria-label="Cancel"
+										title="Cancel"
 									>
 										{@render xIcon()}
 									</button>
@@ -452,8 +453,8 @@
 								<button
 									class="act act-danger"
 									onclick={() => (confirming = p.pid)}
-									aria-label="Portu kapat"
-									title="Portu kapat (süreci sonlandır)"
+									aria-label="Kill port"
+									title="Kill port (terminate the process)"
 								>
 									{@render powerIcon()}
 								</button>
@@ -467,12 +468,12 @@
 			</div>
 		{/if}
 	{:else if !dockerReady}
-		<div class="table" aria-busy="true" aria-label="Docker portları yükleniyor">
+		<div class="table" aria-busy="true" aria-label="Loading Docker ports">
 			<div class="row row-docker head" role="row">
 				<span></span>
 				<span>Port</span>
-				<span>Konteyner</span>
-				<span class="num inner">İç Port</span>
+				<span>Container</span>
+				<span class="num inner">Internal</span>
 				<span></span>
 			</div>
 			{#each [54, 44, 60, 48, 52] as w (w)}
@@ -487,21 +488,21 @@
 		</div>
 	{:else if !dockerAvailable}
 		<div class="notice">
-			<p class="notice-title">Docker kullanılamıyor</p>
-			<p class="notice-body">{dockerReason ?? 'Docker’a erişilemedi.'}</p>
+			<p class="notice-title">Docker unavailable</p>
+			<p class="notice-body">{dockerReason ?? 'Could not reach Docker.'}</p>
 			<p class="notice-hint">
-				Docker Desktop’ı başlatıp <button class="link" onclick={refresh}>yeniden dene</button>.
+				Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.
 			</p>
 		</div>
 	{:else if dports.length === 0}
-		<p class="state">Yayınlanan Docker portu yok. Çalışan konteyner yok ya da port publish edilmemiş.</p>
+		<p class="state">No published Docker ports. No running containers, or none publish a port.</p>
 	{:else}
-		<div class="table" role="table" aria-label="Docker portları">
+		<div class="table" role="table" aria-label="Docker ports">
 			<div class="row row-docker head" role="row">
 				<span></span>
 				<span>Port</span>
-				<span>Konteyner</span>
-				<span class="num inner">İç Port</span>
+				<span>Container</span>
+				<span class="num inner">Internal</span>
 				<span></span>
 			</div>
 
@@ -539,14 +540,14 @@
 									onclick={() => stopContainer(d.containerId)}
 									disabled={stopping === d.containerId}
 								>
-									{stopping === d.containerId ? '…' : 'Durdur'}
+									{stopping === d.containerId ? '…' : 'Stop'}
 								</button>
 								<button
 									class="act-cancel"
 									onclick={() => (dconfirming = null)}
 									disabled={stopping === d.containerId}
-									aria-label="Vazgeç"
-									title="Vazgeç"
+									aria-label="Cancel"
+									title="Cancel"
 								>
 									{@render xIcon()}
 								</button>
@@ -555,8 +556,8 @@
 							<button
 								class="act act-danger"
 								onclick={() => (dconfirming = d.containerId)}
-								aria-label="Konteyneri durdur"
-								title="Konteyneri durdur (portu boşaltır)"
+								aria-label="Stop container"
+								title="Stop container (frees the port)"
 							>
 								{@render stopIcon()}
 							</button>
@@ -571,11 +572,11 @@
 	{/if}
 
 	<footer>
-		<span>Yerelde çalışır · <code>lsof</code> + <code>docker</code></span>
+		<span>Runs locally · <code>lsof</code> + <code>docker</code></span>
 		{#if view === 'tcp'}
-			<span>Satıra tıkla → kaynak & teknik bilgi · <code>⏻</code> = kapat</span>
+			<span>Click a row → resources &amp; details · <code>⏻</code> = kill</span>
 		{:else}
-			<span>Satıra tıkla → istatistikler · <code>◼</code> = konteyneri durdur</span>
+			<span>Click a row → stats · <code>◼</code> = stop container</span>
 		{/if}
 	</footer>
 </main>

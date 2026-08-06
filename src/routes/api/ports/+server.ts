@@ -7,6 +7,6 @@ export const GET: RequestHandler = async () => {
 		const ports = await listPorts();
 		return json({ ports });
 	} catch (err) {
-		throw error(500, err instanceof Error ? err.message : 'lsof çalıştırılamadı.');
+		throw error(500, err instanceof Error ? err.message : 'Could not run lsof.');
 	}
 };

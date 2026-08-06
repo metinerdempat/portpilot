@@ -44,16 +44,16 @@ const CURRENT_USER = process.env.USER ?? process.env.LOGNAME ?? '';
 /** Decide how dangerous it is to kill a given listener. */
 function assessRisk(command: string, user: string, port: number): { risk: Risk; note?: string } {
 	if (SYSTEM_COMMANDS.has(command)) {
-		return { risk: 'system', note: `${command}: sistem süreci — kapatmak sistemi ya da bir servisi bozabilir.` };
+		return { risk: 'system', note: `${command}: system process — killing it may disrupt the OS or a service.` };
 	}
 	if (user === 'root') {
-		return { risk: 'caution', note: 'root kullanıcısına ait — büyük olasılıkla bir sistem servisi (kapatmak sudo ister).' };
+		return { risk: 'caution', note: 'Owned by root — likely a system service (needs sudo to kill).' };
 	}
 	if (port < 1024) {
-		return { risk: 'caution', note: 'Ayrıcalıklı port (<1024) — genelde bir sistem/servis portudur.' };
+		return { risk: 'caution', note: 'Privileged port (<1024) — usually a system/service port.' };
 	}
 	if (CURRENT_USER && user && user !== CURRENT_USER) {
-		return { risk: 'caution', note: `Başka bir kullanıcıya ait (${user}).` };
+		return { risk: 'caution', note: `Owned by another user (${user}).` };
 	}
 	return { risk: 'safe' };
 }
@@ -167,7 +167,7 @@ export type KillOutcome =
 export function killByPid(pid: number, force = false): KillOutcome {
 	// Guard against pid 1 (init/launchd) and nonsense values.
 	if (!Number.isInteger(pid) || pid <= 1) {
-		return { ok: false, reason: 'invalid', message: 'Geçersiz PID.' };
+		return { ok: false, reason: 'invalid', message: 'Invalid PID.' };
 	}
 
 	try {
@@ -176,13 +176,13 @@ export function killByPid(pid: number, force = false): KillOutcome {
 	} catch (err) {
 		const e = err as NodeJS.ErrnoException;
 		if (e.code === 'ESRCH') {
-			return { ok: false, reason: 'not-found', message: 'Süreç zaten kapanmış.' };
+			return { ok: false, reason: 'not-found', message: 'Process already gone.' };
 		}
 		if (e.code === 'EPERM') {
 			return {
 				ok: false,
 				reason: 'forbidden',
-				message: 'İzin yok — bu süreç başka bir kullanıcıya ait (sudo gerekebilir).'
+				message: 'Permission denied — this process belongs to another user (may need sudo).'
 			};
 		}
 		return { ok: false, reason: 'unknown', message: e.message };

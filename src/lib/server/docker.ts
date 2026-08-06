@@ -160,7 +160,7 @@ export type StopOutcome = { ok: true } | { ok: false; message: string };
 export async function stopContainer(id: string): Promise<StopOutcome> {
 	// execFile uses no shell, but reject ids that could be read as a flag ("-…").
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) {
-		return { ok: false, message: 'Geçersiz konteyner kimliği.' };
+		return { ok: false, message: 'Invalid container id.' };
 	}
 	try {
 		await run('docker', ['stop', id], { maxBuffer: 1024 * 1024 });
@@ -169,17 +169,17 @@ export async function stopContainer(id: string): Promise<StopOutcome> {
 		const e = err as { stderr?: string; message?: string };
 		return {
 			ok: false,
-			message: (e.stderr ?? '').toString().trim() || e.message || 'Konteyner durdurulamadı.'
+			message: (e.stderr ?? '').toString().trim() || e.message || 'Failed to stop the container.'
 		};
 	}
 }
 
 function describeError(err: unknown): string {
 	const e = err as { code?: string; stderr?: string; message?: string };
-	if (e.code === 'ENOENT') return 'Docker CLI bulunamadı — kurulu değil.';
+	if (e.code === 'ENOENT') return 'Docker CLI not found — is it installed?';
 	const stderr = (e.stderr ?? '').toString();
 	if (/cannot connect to the docker daemon|is the docker daemon running/i.test(stderr)) {
-		return 'Docker çalışmıyor — daemon kapalı görünüyor.';
+		return "Docker isn't running — the daemon appears to be down.";
 	}
-	return stderr.trim() || e.message || 'Docker’a erişilemedi.';
+	return stderr.trim() || e.message || 'Could not reach Docker.';
 }

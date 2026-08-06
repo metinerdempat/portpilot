@@ -12,11 +12,11 @@ export const POST: RequestHandler = async ({ request }) => {
 	try {
 		body = await request.json();
 	} catch {
-		throw error(400, 'Geçersiz istek gövdesi.');
+		throw error(400, 'Invalid request body.');
 	}
 
 	const id = typeof body.id === 'string' ? body.id : '';
-	if (!id) throw error(400, 'Konteyner kimliği gerekli.');
+	if (!id) throw error(400, 'Container id is required.');
 
 	const outcome = await stopContainer(id);
 	if (!outcome.ok) {
