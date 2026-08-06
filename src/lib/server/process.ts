@@ -1,8 +1,37 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ProcessInfo } from '$lib/types';
+import { IS_WINDOWS } from './platform';
 
 const run = promisify(execFile);
+
+/**
+ * Windows detail via `tasklist /V` — memory + owning process. CPU %, parent and
+ * full command line aren't cheaply available, so they're left blank.
+ */
+const getProcessInfoWindows = async (pid: number): Promise<ProcessInfo | null> => {
+	try {
+		const { stdout } = await run(
+			'tasklist',
+			['/V', '/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+			{ maxBuffer: 1024 * 1024 }
+		);
+		const m = stdout.match(/^"([^"]*)","(\d+)","[^"]*","[^"]*","([^"]*)"/);
+		if (!m) return null;
+		const memKb = Number(m[3].replace(/[^\d]/g, ''));
+		return {
+			pid,
+			ppid: null,
+			cpu: 0,
+			mem: 0,
+			rssMb: Number.isFinite(memKb) ? Math.round((memKb / 1024) * 10) / 10 : 0,
+			uptime: '—',
+			command: m[1].replace(/\.exe$/i, '')
+		};
+	} catch {
+		return null;
+	}
+};
 
 /**
  * Resource usage + technical details for a single process, via `ps`.
@@ -11,6 +40,7 @@ const run = promisify(execFile);
  */
 export const getProcessInfo = async (pid: number): Promise<ProcessInfo | null> => {
 	if (!Number.isInteger(pid) || pid <= 0) return null;
+	if (IS_WINDOWS) return getProcessInfoWindows(pid);
 	try {
 		const { stdout } = await run(
 			'ps',

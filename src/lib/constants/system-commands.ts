@@ -11,5 +11,8 @@ export const SYSTEM_COMMANDS = new Set([
 	'searchpartyd', 'Spotlight', 'mds', 'mds_stores',
 	// linux / cross-platform daemons
 	'systemd', 'sshd', 'cupsd', 'cups-browsed', 'avahi-daemon', 'rpcbind',
-	'netbiosd', 'dnsmasq'
+	'netbiosd', 'dnsmasq',
+	// windows system processes (image name without .exe)
+	'System', 'svchost', 'services', 'lsass', 'wininit', 'csrss', 'smss',
+	'winlogon', 'spoolsv', 'fontdrvhost', 'dwm', 'LsaIso', 'SearchIndexer'
 ]);

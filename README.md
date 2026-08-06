@@ -54,8 +54,8 @@ Each TCP listener is also given a **risk rating** on the server: known system da
 ## Run it
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Then open http://localhost:5173.
@@ -63,13 +63,16 @@ Then open http://localhost:5173.
 For a production build:
 
 ```bash
-npm run build
-npm start        # node build
+pnpm build
+pnpm start        # node build
 ```
 
 ## Platform support
 
-Works on **macOS** and **Linux**, both of which ship `lsof`. Windows is not supported yet — the equivalent there is `netstat -ano` + `taskkill`, which would slot in behind the same API.
+- **macOS / Linux** — ports via `lsof`, process stats via `ps`.
+- **Windows** — ports via `netstat -ano`, process names + memory via `tasklist`; killing works through Node's `process.kill` (mapped to `TerminateProcess`). CPU %, full command line and user aren't surfaced there yet.
+
+Docker works the same everywhere (it shells out to the `docker` CLI). The right implementation is chosen at runtime from `process.platform`.
 
 ## Safety
 
@@ -77,9 +80,9 @@ portpilot only ever *reads* the port table and *sends signals to processes you a
 
 ## Tech
 
-SvelteKit · Svelte 5 (runes) · TypeScript · `adapter-node` · zero runtime UI dependencies.
+SvelteKit · Svelte 5 (runes) · TypeScript · `adapter-node` · pnpm · [lucide](https://lucide.dev) icons.
 
-Shared code is kept out of the components: `type`s live in `src/lib/types/`, constants in `src/lib/constants.ts`, framework-free helpers in `src/lib/utils.ts`, and the OS-facing logic in `src/lib/server/`. The kill / stop action is a single reused snippet rather than two copies.
+Shared code lives outside the components in barrelled folders: `type`s in `src/lib/types/`, constants in `src/lib/constants/`, framework-free helpers in `src/lib/utils/`, reusable UI in `src/lib/components/`, and the OS-facing logic (with a per-platform split) in `src/lib/server/`. Every function is an arrow.
 
 ## License
 

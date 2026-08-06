@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { PRIVILEGED_PORT_MAX, SYSTEM_COMMANDS } from '$lib/constants';
 import type { KillOutcome, PortEntry, Risk } from '$lib/types';
 import { getProcessStats } from './process';
+import { IS_WINDOWS } from './platform';
 
 const run = promisify(execFile);
 
@@ -44,6 +45,8 @@ const assessRisk = (command: string, user: string, port: number): { risk: Risk; 
  *   -FpcnL           emit the pid, command, name and login fields
  */
 export const listPorts = async (): Promise<PortEntry[]> => {
+	if (IS_WINDOWS) return listPortsWindows();
+
 	let stdout = '';
 	try {
 		const res = await run('lsof', ['-nP', '+c0', '-iTCP', '-sTCP:LISTEN', '-FpcnL'], {
@@ -121,6 +124,75 @@ export const listPorts = async (): Promise<PortEntry[]> => {
 
 	return entries.sort((a, b) => a.port - b.port || a.pid - b.pid);
 }
+
+/**
+ * Windows: `netstat -ano -p TCP` lists listening sockets + owning PID; one
+ * `tasklist` maps PID → image name and memory. CPU / full command / user are
+ * omitted (not cheaply available). Killing still works through process.kill,
+ * which Node maps to TerminateProcess on Windows.
+ */
+const listPortsWindows = async (): Promise<PortEntry[]> => {
+	let netstat = '';
+	try {
+		netstat = (await run('netstat', ['-ano', '-p', 'TCP'], { maxBuffer: 8 * 1024 * 1024 })).stdout;
+	} catch {
+		return [];
+	}
+
+	const rows: { port: number; address: string; pid: number }[] = [];
+	const seen = new Set<string>();
+	for (const line of netstat.split('\n')) {
+		const parts = line.trim().split(/\s+/);
+		if (parts[0] !== 'TCP' || parts[3] !== 'LISTENING') continue;
+		const local = parts[1];
+		const pid = Number(parts[4]);
+		const li = local.lastIndexOf(':');
+		if (li === -1 || !Number.isInteger(pid)) continue;
+		const port = Number(local.slice(li + 1));
+		if (!Number.isInteger(port) || port <= 0) continue;
+		const address = local.slice(0, li).replace(/^\[/, '').replace(/\]$/, '');
+		const key = `${pid}:${port}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		rows.push({ port, address, pid });
+	}
+
+	// One tasklist call maps pid → image name + working-set memory.
+	const meta = new Map<number, { command: string; rssMb: number }>();
+	try {
+		const { stdout } = await run('tasklist', ['/FO', 'CSV', '/NH'], { maxBuffer: 8 * 1024 * 1024 });
+		for (const line of stdout.split('\n')) {
+			const m = line.match(/^"([^"]*)","(\d+)","[^"]*","[^"]*","([^"]*)"/);
+			if (!m) continue;
+			const memKb = Number(m[3].replace(/[^\d]/g, ''));
+			meta.set(Number(m[2]), {
+				command: m[1].replace(/\.exe$/i, ''),
+				rssMb: Number.isFinite(memKb) ? Math.round((memKb / 1024) * 10) / 10 : 0
+			});
+		}
+	} catch {
+		/* names / memory are best-effort */
+	}
+
+	const entries = rows.map((r): PortEntry => {
+		const info = meta.get(r.pid);
+		const command = info?.command ?? '';
+		const { risk, note } = assessRisk(command, '', r.port);
+		return {
+			pid: r.pid,
+			command,
+			user: '',
+			port: r.port,
+			address: r.address,
+			protocol: 'TCP',
+			risk,
+			riskNote: note,
+			rssMb: info?.rssMb
+		};
+	});
+
+	return entries.sort((a, b) => a.port - b.port || a.pid - b.pid);
+};
 
 /** Parse an lsof name field such as "*:3000", "127.0.0.1:5432" or "[::1]:6379". */
 const parseName = (name: string): { address: string; port: number } | null => {
