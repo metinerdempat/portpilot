@@ -55,7 +55,12 @@
 	let runningContainers = $derived(containers.filter((c) => c.running).length);
 
 	function matchPort(p: PortEntry, q: string) {
-		return String(p.port).includes(q) || p.command.toLowerCase().includes(q) || p.user.toLowerCase().includes(q);
+		return (
+			String(p.port).includes(q) ||
+			p.command.toLowerCase().includes(q) ||
+			(p.fullCommand ?? '').toLowerCase().includes(q) ||
+			p.user.toLowerCase().includes(q)
+		);
 	}
 	function matchDocker(d: DockerPort, q: string) {
 		return (
@@ -560,7 +565,7 @@
 						<span class="cell"><span class="dot" data-risk={p.risk} title={p.riskNote}></span></span>
 						<span class="cell port">{p.port}</span>
 						<span class="cell proc">
-							<span class="cmd">{p.command || '—'}</span>
+							<span class="cmd" title={p.fullCommand}>{p.command || '—'}</span>
 							<span class="scope">{scopeLabel(p.address)}</span>
 							{#if p.risk !== 'safe'}<span class="tag t-{p.risk}">{p.risk}</span>{/if}
 						</span>

@@ -37,27 +37,31 @@ export async function getProcessInfo(pid: number): Promise<ProcessInfo | null> {
 	}
 }
 
-export type ProcessStat = { cpu: number; mem: number; rssMb: number };
+export type ProcessStat = { cpu: number; mem: number; rssMb: number; command: string };
 
 /**
- * CPU / memory for many pids at once, in a single `ps` call — cheap enough to
- * run on every refresh so the list can show live usage inline.
+ * CPU / memory / full command for many pids at once, in a single `ps` call —
+ * cheap enough to run on every refresh. `command` is last (it contains spaces)
+ * so the rest of the line is captured whole.
  */
 export async function getProcessStats(pids: number[]): Promise<Map<number, ProcessStat>> {
 	const out = new Map<number, ProcessStat>();
 	const valid = [...new Set(pids)].filter((p) => Number.isInteger(p) && p > 0);
 	if (valid.length === 0) return out;
 	try {
-		const { stdout } = await run('ps', ['-o', 'pid=,pcpu=,pmem=,rss=', '-p', valid.join(',')], {
-			maxBuffer: 4 * 1024 * 1024
-		});
+		const { stdout } = await run(
+			'ps',
+			['-o', 'pid=,pcpu=,pmem=,rss=,command=', '-p', valid.join(',')],
+			{ maxBuffer: 4 * 1024 * 1024 }
+		);
 		for (const line of stdout.split('\n')) {
-			const m = line.trim().match(/^(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)$/);
+			const m = line.match(/^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)(?:\s+(.*))?$/);
 			if (!m) continue;
 			out.set(Number(m[1]), {
 				cpu: Number(m[2]),
 				mem: Number(m[3]),
-				rssMb: Math.round((Number(m[4]) / 1024) * 10) / 10
+				rssMb: Math.round((Number(m[4]) / 1024) * 10) / 10,
+				command: (m[5] ?? '').trim()
 			});
 		}
 	} catch {

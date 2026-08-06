@@ -115,6 +115,7 @@ export async function listPorts(): Promise<PortEntry[]> {
 			e.cpu = s.cpu;
 			e.mem = s.mem;
 			e.rssMb = s.rssMb;
+			e.fullCommand = s.command;
 		}
 	}
 

@@ -19,6 +19,8 @@ export type PortEntry = {
 	mem?: number;
 	/** Resident memory in MB, from the same snapshot. */
 	rssMb?: number;
+	/** Full command line (path + args) — used for filtering; shown on hover. */
+	fullCommand?: string;
 };
 
 export type KillOutcome =
