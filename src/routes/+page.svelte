@@ -1,282 +1,29 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Icon } from '$lib/components';
-	import type { ContainerInfo, Detail, DockerPort, PortEntry, Tab, View } from '$lib/types';
-	import { REFRESH_MS, SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
-	import {
-		formatMem,
-		formatNow,
-		matchContainer,
-		matchDocker,
-		matchPort,
-		readErrorMessage,
-		scopeLabel
-	} from '$lib/utils';
+	import { app } from '$lib/stores';
+	import type { ContainerInfo, View } from '$lib/types';
+	import { SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
+	import { formatMem, scopeLabel } from '$lib/utils';
 
-	let view = $state<Tab>('tcp');
-
-	let ports = $state<PortEntry[]>([]);
-	let portsReady = $state(false);
-	let confirming = $state<number | null>(null);
-	let killing = $state<number | null>(null);
-
-	let dports = $state<DockerPort[]>([]);
-	let dockerReady = $state(false);
-	let dockerAvailable = $state(true);
-	let dockerReason = $state<string | null>(null);
-	let dconfirming = $state<string | null>(null);
-	let busyId = $state<string | null>(null); // container action in flight (stop/start/restart)
-
-	// ---- containers ----
-	let containers = $state<ContainerInfo[]>([]);
-	let containersReady = $state(false);
-	let containerAvail = $state(true);
-	let containerReason = $state<string | null>(null);
-
-	let expanded = $state<string[]>([]);
-	let details = $state<Record<string, Detail>>({});
-
-	let error = $state<string | null>(null);
-	let autoRefresh = $state(false);
-	let updatedAt = $state('');
-
-	// ---- filter + keyboard ----
-	let filter = $state('');
-	let filterEl = $state<HTMLInputElement | null>(null);
-
-	let visiblePorts = $derived(
-		filter.trim() ? ports.filter((p) => matchPort(p, filter.toLowerCase())) : ports
-	);
-	let visibleDports = $derived(
-		filter.trim() ? dports.filter((d) => matchDocker(d, filter.toLowerCase())) : dports
-	);
-	let visibleContainers = $derived(
-		filter.trim() ? containers.filter((c) => matchContainer(c, filter.toLowerCase())) : containers
-	);
-	let riskyCount = $derived(ports.filter((p) => p.risk !== 'safe').length);
-	let runningContainers = $derived(containers.filter((c) => c.running).length);
-
-	const loadPorts = async () => {
-		try {
-			const res = await fetch('/api/ports');
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			ports = (await res.json()).ports;
-			error = null;
-			updatedAt = formatNow();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to read ports.';
-		} finally {
-			portsReady = true;
-		}
-	}
-
-	const loadDocker = async () => {
-		try {
-			const res = await fetch('/api/docker');
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			const data = await res.json();
-			dockerAvailable = data.available;
-			dockerReason = data.reason ?? null;
-			dports = data.ports;
-			error = null;
-			updatedAt = formatNow();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to read Docker.';
-		} finally {
-			dockerReady = true;
-		}
-	}
-
-	const loadContainers = async () => {
-		try {
-			const res = await fetch('/api/docker/containers');
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			const data = await res.json();
-			containerAvail = data.available;
-			containerReason = data.reason ?? null;
-			containers = data.containers;
-			error = null;
-			updatedAt = formatNow();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to read containers.';
-		} finally {
-			containersReady = true;
-		}
-	}
-
-	const refresh = () => {
-		if (view === 'tcp') return loadPorts();
-		if (view === 'docker') return loadDocker();
-		return loadContainers();
-	}
-
-	const switchView = (v: Tab) => {
-		if (view === v) return;
-		view = v;
-		confirming = null;
-		dconfirming = null;
-		expanded = [];
-		error = null;
-		refresh();
-	}
-
-	const kill = async (pid: number, force = false) => {
-		killing = pid;
-		try {
-			const res = await fetch('/api/kill', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ pid, force })
-			});
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			confirming = null;
-			await loadPorts();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to terminate the process.';
-		} finally {
-			killing = null;
-		}
-	}
-
-	const containerDo = async (id: string, action: 'start' | 'stop' | 'restart') => {
-		busyId = id;
-		try {
-			const res = await fetch('/api/docker', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ id, action })
-			});
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			dconfirming = null;
-			await (view === 'containers' ? loadContainers() : loadDocker());
-		} catch (e) {
-			error = e instanceof Error ? e.message : `Failed to ${action} the container.`;
-		} finally {
-			busyId = null;
-		}
-	}
-
-	const copyText = (text: string) => {
-		navigator.clipboard?.writeText(text);
-	}
-
-	const beginAction = (kind: View, id: number | string) => {
-		if (kind === 'tcp') confirming = id as number;
-		else dconfirming = id as string;
-	}
-	const cancelAction = (kind: View) => {
-		if (kind === 'tcp') confirming = null;
-		else dconfirming = null;
-	}
-	const confirmAction = (kind: View, id: number | string) => {
-		if (kind === 'tcp') kill(id as number);
-		else containerDo(id as string, 'stop');
-	}
-
-	// ---- expand / detail ----
-	const keyFor = (kind: View, item: PortEntry | DockerPort): string => {
-		return kind === 'tcp'
-			? 'tcp:' + (item as PortEntry).pid + ':' + (item as PortEntry).port
-			: 'docker:' + (item as DockerPort).containerId + ':' + (item as DockerPort).hostPort + ':' + (item as DockerPort).protocol;
-	}
-	const isOpen = (key: string) => {
-		return expanded.includes(key);
-	}
-
-	const loadDetail = async (key: string, kind: Tab, id: number | string) => {
-		details = { ...details, [key]: { loading: true, error: null, data: null } };
-		try {
-			const eid = encodeURIComponent(String(id));
-			const url =
-				kind === 'tcp'
-					? `/api/process?pid=${id}`
-					: kind === 'docker'
-						? `/api/docker/stats?id=${eid}`
-						: `/api/docker/logs?id=${eid}&tail=200`;
-			const res = await fetch(url);
-			if (!res.ok) throw new Error(await readErrorMessage(res));
-			const data = await res.json();
-			details = { ...details, [key]: { loading: false, error: null, data } };
-		} catch (e) {
-			details = {
-				...details,
-				[key]: { loading: false, error: e instanceof Error ? e.message : 'Failed to load details.', data: null }
-			};
-		}
-	}
-
-	const toggleExpand = (key: string, kind: Tab, id: number | string) => {
-		if (isOpen(key)) {
-			expanded = expanded.filter((k) => k !== key);
-		} else {
-			expanded = [...expanded, key];
-			loadDetail(key, kind, id);
-		}
-	}
-
-	const rowClick = (e: MouseEvent, key: string, kind: Tab, id: number | string) => {
-		if ((e.target as HTMLElement).closest('button')) return;
-		toggleExpand(key, kind, id);
-	}
-
-	const focusRow = (i: number) => {
-		(document.querySelector(`[data-idx="${i}"]`) as HTMLElement | null)?.focus();
-	}
-
-	// Per-row keys: ↑↓ / j k move focus, ↵ expands, x kills — when the row itself
-	// (not an inner button) holds focus.
-	const rowKey = (e: KeyboardEvent, i: number, key: string, kind: Tab, id: number | string, locked: boolean) => {
-		if (e.target !== e.currentTarget) return;
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			toggleExpand(key, kind, id);
-		} else if (e.key === 'x') {
-			if (kind !== 'containers' && !locked) {
-				e.preventDefault();
-				beginAction(kind, id);
-			}
-		} else if (e.key === 'ArrowDown' || e.key === 'j') {
-			e.preventDefault();
-			focusRow(i + 1);
-		} else if (e.key === 'ArrowUp' || e.key === 'k') {
-			e.preventDefault();
-			focusRow(i - 1);
-		}
-	}
-
-	const onGlobalKey = (e: KeyboardEvent) => {
-		const t = e.target as HTMLElement;
-		const inInput = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
-		if (e.key === '/' && !inInput) {
-			e.preventDefault();
-			filterEl?.focus();
-		} else if (e.key === 'Escape') {
-			if (inInput) (t as HTMLInputElement).blur();
-			else if (confirming !== null || dconfirming !== null) {
-				confirming = null;
-				dconfirming = null;
-			} else if (filter) filter = '';
-		}
-	}
-
-	onMount(refresh);
+	onMount(app.refresh);
 
 	$effect(() => {
-		if (!autoRefresh) return;
-		const id = setInterval(refresh, REFRESH_MS);
+		if (!app.autoRefresh) return;
+		const id = setInterval(app.refresh, app.refreshMs);
 		return () => clearInterval(id);
 	});
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window onkeydown={app.onGlobalKey} />
 
 <svelte:head>
 	<title>portpilot — ports & docker</title>
 </svelte:head>
 
 {#snippet actionCell(a: { kind: View; id: number | string; locked: boolean; copy?: number })}
-	{@const active = a.kind === 'tcp' ? confirming === a.id : dconfirming === a.id}
-	{@const busy = a.kind === 'tcp' ? killing === a.id : busyId === a.id}
+	{@const active = a.kind === 'tcp' ? app.confirming === a.id : app.dconfirming === a.id}
+	{@const busy = a.kind === 'tcp' ? app.killing === a.id : app.busyId === a.id}
 	<span class="cell actions">
 		{#if a.locked}
 			<span class="icon-btn locked" role="img" aria-label="Protected system process" data-tip="Protected — can’t kill">
@@ -284,30 +31,30 @@
 			</span>
 		{:else if active}
 			<span class="confirm">
-				<button class="kill-btn" onclick={() => confirmAction(a.kind, a.id)} disabled={busy}>
+				<button class="kill-btn" onclick={() => app.confirmAction(a.kind, a.id)} disabled={busy}>
 					{busy ? '…' : a.kind === 'tcp' ? 'Kill' : 'Stop'}
 				</button>
 				{#if a.kind === 'tcp'}
-					<button class="icon-btn force" onclick={() => kill(a.id as number, true)} disabled={busy} data-tip="Force · SIGKILL" aria-label="Force kill">
+					<button class="icon-btn force" onclick={() => app.kill(a.id as number, true)} disabled={busy} data-tip="Force · SIGKILL" aria-label="Force kill">
 						<Icon name="zap" />
 					</button>
 				{/if}
-				<button class="icon-btn" onclick={() => cancelAction(a.kind)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
+				<button class="icon-btn" onclick={() => app.cancelAction(a.kind)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
 					<Icon name="x" />
 				</button>
 			</span>
 		{:else}
 			{#if a.copy != null}
-				<button class="icon-btn reveal" onclick={() => copyText('localhost:' + a.copy)} data-tip={'Copy localhost:' + a.copy} aria-label="Copy address">
+				<button class="icon-btn reveal" onclick={() => app.copyText('localhost:' + a.copy)} data-tip={'Copy localhost:' + a.copy} aria-label="Copy address">
 					<Icon name="copy" />
 				</button>
 			{/if}
 			{#if a.kind === 'docker'}
-				<button class="icon-btn reveal" onclick={() => containerDo(a.id as string, 'restart')} disabled={busy} data-tip="Restart container" aria-label="Restart container">
+				<button class="icon-btn reveal" onclick={() => app.containerDo(a.id as string, 'restart')} disabled={busy} data-tip="Restart container" aria-label="Restart container">
 					<Icon name="restart" />
 				</button>
 			{/if}
-			<button class="icon-btn danger reveal" onclick={() => beginAction(a.kind, a.id)} data-tip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'} aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}>
+			<button class="icon-btn danger reveal" onclick={() => app.beginAction(a.kind, a.id)} data-tip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'} aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}>
 				{#if a.kind === 'tcp'}<Icon name="power" />{:else}<Icon name="stop" />{/if}
 			</button>
 		{/if}
@@ -315,7 +62,7 @@
 {/snippet}
 
 {#snippet detailPanel(key: string, kind: View)}
-	{@const d = details[key]}
+	{@const d = app.details[key]}
 	<div class="detail">
 		{#if !d || d.loading}
 			<div class="facts">
@@ -347,26 +94,26 @@
 {/snippet}
 
 {#snippet containerActions(c: ContainerInfo)}
-	{@const busy = busyId === c.id}
+	{@const busy = app.busyId === c.id}
 	<span class="cell actions">
-		{#if dconfirming === c.id}
+		{#if app.dconfirming === c.id}
 			<span class="confirm">
-				<button class="kill-btn" onclick={() => containerDo(c.id, 'stop')} disabled={busy}>
+				<button class="kill-btn" onclick={() => app.containerDo(c.id, 'stop')} disabled={busy}>
 					{busy ? '…' : 'Stop'}
 				</button>
-				<button class="icon-btn" onclick={() => (dconfirming = null)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
+				<button class="icon-btn" onclick={() => (app.dconfirming = null)} disabled={busy} data-tip="Cancel" aria-label="Cancel">
 					<Icon name="x" />
 				</button>
 			</span>
 		{:else if c.running}
-			<button class="icon-btn reveal" onclick={() => containerDo(c.id, 'restart')} disabled={busy} data-tip="Restart" aria-label="Restart">
+			<button class="icon-btn reveal" onclick={() => app.containerDo(c.id, 'restart')} disabled={busy} data-tip="Restart" aria-label="Restart">
 				<Icon name="restart" />
 			</button>
-			<button class="icon-btn danger reveal" onclick={() => (dconfirming = c.id)} disabled={busy} data-tip="Stop" aria-label="Stop">
+			<button class="icon-btn danger reveal" onclick={() => (app.dconfirming = c.id)} disabled={busy} data-tip="Stop" aria-label="Stop">
 				<Icon name="stop" />
 			</button>
 		{:else}
-			<button class="icon-btn go" onclick={() => containerDo(c.id, 'start')} disabled={busy} data-tip="Start" aria-label="Start">
+			<button class="icon-btn go" onclick={() => app.containerDo(c.id, 'start')} disabled={busy} data-tip="Start" aria-label="Start">
 				<Icon name="play" />
 			</button>
 		{/if}
@@ -374,7 +121,7 @@
 {/snippet}
 
 {#snippet logsPanel(key: string)}
-	{@const d = details[key]}
+	{@const d = app.details[key]}
 	<div class="detail logs">
 		{#if !d || d.loading}
 			<div class="logskel">
@@ -395,33 +142,33 @@
 			<span class="name">portpilot</span>
 		</div>
 		<nav class="views" aria-label="View">
-			<button class:on={view === 'tcp'} onclick={() => switchView('tcp')}>TCP</button>
-			<button class:on={view === 'docker'} onclick={() => switchView('docker')}>Docker</button>
-			<button class:on={view === 'containers'} onclick={() => switchView('containers')}>Containers</button>
+			<button class:on={app.view === 'tcp'} onclick={() => app.switchView('tcp')}>TCP</button>
+			<button class:on={app.view === 'docker'} onclick={() => app.switchView('docker')}>Docker</button>
+			<button class:on={app.view === 'containers'} onclick={() => app.switchView('containers')}>Containers</button>
 		</nav>
 		<div class="grow"></div>
 		<div class="stat" aria-live="polite">
-			{#if view === 'tcp' && portsReady}
-				<span class="n">{ports.length}</span> ports{#if riskyCount > 0}<span class="sep">·</span><span class="risky">{riskyCount} risky</span>{/if}
-			{:else if view === 'docker' && dockerReady && dockerAvailable}
-				<span class="n">{dports.length}</span> published
-			{:else if view === 'containers' && containersReady && containerAvail}
-				<span class="n">{runningContainers}</span> / {containers.length} up
+			{#if app.view === 'tcp' && app.portsReady}
+				<span class="n">{app.ports.length}</span> ports{#if app.riskyCount > 0}<span class="sep">·</span><span class="risky">{app.riskyCount} risky</span>{/if}
+			{:else if app.view === 'docker' && app.dockerReady && app.dockerAvailable}
+				<span class="n">{app.dports.length}</span> published
+			{:else if app.view === 'containers' && app.containersReady && app.containerAvail}
+				<span class="n">{app.runningContainers}</span> / {app.containers.length} up
 			{/if}
 		</div>
-		{#if updatedAt}<time class="clock">{updatedAt}</time>{/if}
+		{#if app.updatedAt}<time class="clock">{app.updatedAt}</time>{/if}
 		<label class="auto" data-tip="Refresh every 3s">
-			<input type="checkbox" bind:checked={autoRefresh} />
+			<input type="checkbox" bind:checked={app.autoRefresh} />
 			<span>auto</span>
 		</label>
-		<button class="tbtn" onclick={refresh} data-tip="Refresh now">Refresh</button>
+		<button class="tbtn" onclick={app.refresh} data-tip="Refresh now">Refresh</button>
 	</header>
 
 	<div class="filterbar">
 		<span class="search"><Icon name="search" /></span>
 		<input
-			bind:this={filterEl}
-			bind:value={filter}
+			bind:this={app.filterEl}
+			bind:value={app.filter}
 			class="filter"
 			type="text"
 			placeholder="Filter by port, process, container…"
@@ -429,19 +176,19 @@
 			autocomplete="off"
 			aria-label="Filter"
 		/>
-		{#if filter}
-			<button class="clear" onclick={() => (filter = '')} aria-label="Clear filter"><Icon name="x" /></button>
+		{#if app.filter}
+			<button class="clear" onclick={() => (app.filter = '')} aria-label="Clear filter"><Icon name="x" /></button>
 		{:else}
 			<kbd class="slash">/</kbd>
 		{/if}
 	</div>
 
-	{#if error}
-		<div class="banner" role="alert">{error}</div>
+	{#if app.error}
+		<div class="banner" role="alert">{app.error}</div>
 	{/if}
 
 	<main class="list">
-		{#if view === 'tcp'}
+		{#if app.view === 'tcp'}
 			<div class="row rhead" role="row">
 				<span class="cell"></span>
 				<span class="cell">Port</span>
@@ -453,7 +200,7 @@
 				<span class="cell"></span>
 			</div>
 
-			{#if !portsReady}
+			{#if !app.portsReady}
 				{#each SKELETON_TCP_WIDTHS as w (w)}
 					<div class="row rtcp sk-row" aria-hidden="true">
 						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
@@ -466,20 +213,20 @@
 						<span class="cell"></span>
 					</div>
 				{/each}
-			{:else if visiblePorts.length === 0}
-				<p class="empty">{filter ? 'No ports match the filter.' : 'No listening TCP ports. All quiet.'}</p>
+			{:else if app.visiblePorts.length === 0}
+				<p class="empty">{app.filter ? 'No ports match the filter.' : 'No listening TCP ports. All quiet.'}</p>
 			{:else}
-				{#each visiblePorts as p, i (p.pid + ':' + p.port)}
-					{@const key = keyFor('tcp', p)}
+				{#each app.visiblePorts as p, i (p.pid + ':' + p.port)}
+					{@const key = app.keyFor('tcp', p)}
 					<div
 						class="row rtcp"
-						class:open={isOpen(key)}
+						class:open={app.isOpen(key)}
 						data-risk={p.risk}
 						data-idx={i}
 						role="row"
 						tabindex="0"
-						onclick={(e) => rowClick(e, key, 'tcp', p.pid)}
-						onkeydown={(e) => rowKey(e, i, key, 'tcp', p.pid, p.risk === 'system')}
+						onclick={(e) => app.rowClick(e, key, 'tcp', p.pid)}
+						onkeydown={(e) => app.rowKey(e, i, key, 'tcp', p.pid, p.risk === 'system')}
 					>
 						<span class="cell"><span class="dot" data-risk={p.risk} title={p.riskNote}></span></span>
 						<span class="cell port">{p.port}</span>
@@ -492,12 +239,12 @@
 						<span class="cell r metric">{p.rssMb != null ? formatMem(p.rssMb) : '·'}</span>
 						<span class="cell r pid">{p.pid}</span>
 						{@render actionCell({ kind: 'tcp', id: p.pid, locked: p.risk === 'system' })}
-						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
+						<span class="cell chevcell"><Icon name="chevron" open={app.isOpen(key)} /></span>
 					</div>
-					{#if isOpen(key)}{@render detailPanel(key, 'tcp')}{/if}
+					{#if app.isOpen(key)}{@render detailPanel(key, 'tcp')}{/if}
 				{/each}
 			{/if}
-		{:else if view === 'docker'}
+		{:else if app.view === 'docker'}
 			<div class="row rhead rdocker" role="row">
 				<span class="cell"></span>
 				<span class="cell">Port</span>
@@ -507,7 +254,7 @@
 				<span class="cell"></span>
 			</div>
 
-			{#if !dockerReady}
+			{#if !app.dockerReady}
 				{#each SKELETON_DOCKER_WIDTHS as w (w)}
 					<div class="row rdocker sk-row" aria-hidden="true">
 						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
@@ -518,25 +265,25 @@
 						<span class="cell"></span>
 					</div>
 				{/each}
-			{:else if !dockerAvailable}
+			{:else if !app.dockerAvailable}
 				<div class="notice">
 					<p class="notice-t">Docker unavailable</p>
-					<p class="notice-b">{dockerReason ?? 'Could not reach Docker.'}</p>
-					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.</p>
+					<p class="notice-b">{app.dockerReason ?? 'Could not reach Docker.'}</p>
+					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={app.refresh}>try again</button>.</p>
 				</div>
-			{:else if visibleDports.length === 0}
-				<p class="empty">{filter ? 'No ports match the filter.' : 'No published Docker ports.'}</p>
+			{:else if app.visibleDports.length === 0}
+				<p class="empty">{app.filter ? 'No ports match the filter.' : 'No published Docker ports.'}</p>
 			{:else}
-				{#each visibleDports as d, i (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
-					{@const key = keyFor('docker', d)}
+				{#each app.visibleDports as d, i (d.containerId + ':' + d.hostPort + ':' + d.protocol)}
+					{@const key = app.keyFor('docker', d)}
 					<div
 						class="row rdocker"
-						class:open={isOpen(key)}
+						class:open={app.isOpen(key)}
 						data-idx={i}
 						role="row"
 						tabindex="0"
-						onclick={(e) => rowClick(e, key, 'docker', d.containerId)}
-						onkeydown={(e) => rowKey(e, i, key, 'docker', d.containerId, false)}
+						onclick={(e) => app.rowClick(e, key, 'docker', d.containerId)}
+						onkeydown={(e) => app.rowKey(e, i, key, 'docker', d.containerId, false)}
 					>
 						<span class="cell"><span class="dot" data-risk="running"></span></span>
 						<span class="cell port">{d.hostPort}</span>
@@ -547,9 +294,9 @@
 						</span>
 						<span class="cell map">→ {d.containerPort}/{d.protocol}</span>
 						{@render actionCell({ kind: 'docker', id: d.containerId, locked: false, copy: d.hostPort })}
-						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
+						<span class="cell chevcell"><Icon name="chevron" open={app.isOpen(key)} /></span>
 					</div>
-					{#if isOpen(key)}{@render detailPanel(key, 'docker')}{/if}
+					{#if app.isOpen(key)}{@render detailPanel(key, 'docker')}{/if}
 				{/each}
 			{/if}
 		{:else}
@@ -563,7 +310,7 @@
 				<span class="cell"></span>
 			</div>
 
-			{#if !containersReady}
+			{#if !app.containersReady}
 				{#each SKELETON_DOCKER_WIDTHS as w (w)}
 					<div class="row rcont sk-row" aria-hidden="true">
 						<span class="cell"><span class="dot" style="background: var(--sk-hi)"></span></span>
@@ -575,29 +322,29 @@
 						<span class="cell"></span>
 					</div>
 				{/each}
-			{:else if !containerAvail}
+			{:else if !app.containerAvail}
 				<div class="notice">
 					<p class="notice-t">Docker unavailable</p>
-					<p class="notice-b">{containerReason ?? 'Could not reach Docker.'}</p>
-					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={refresh}>try again</button>.</p>
+					<p class="notice-b">{app.containerReason ?? 'Could not reach Docker.'}</p>
+					<p class="notice-h">Start Docker Desktop and <button class="link" onclick={app.refresh}>try again</button>.</p>
 				</div>
-			{:else if visibleContainers.length === 0}
-				<p class="empty">{filter ? 'No containers match the filter.' : 'No containers.'}</p>
+			{:else if app.visibleContainers.length === 0}
+				<p class="empty">{app.filter ? 'No containers match the filter.' : 'No containers.'}</p>
 			{:else}
-				{#each visibleContainers as c, i (c.id)}
+				{#each app.visibleContainers as c, i (c.id)}
 					{@const key = 'cont:' + c.id}
 					{@const dotState = c.running ? (c.health === 'unhealthy' ? 'bad' : c.health === 'starting' ? 'warn' : 'ok') : 'off'}
-					{#if i === 0 || c.project !== visibleContainers[i - 1]?.project}
+					{#if i === 0 || c.project !== app.visibleContainers[i - 1]?.project}
 						<div class="grouphead">{c.project ?? 'ungrouped'}</div>
 					{/if}
 					<div
 						class="row rcont"
-						class:open={isOpen(key)}
+						class:open={app.isOpen(key)}
 						data-idx={i}
 						role="row"
 						tabindex="0"
-						onclick={(e) => rowClick(e, key, 'containers', c.id)}
-						onkeydown={(e) => rowKey(e, i, key, 'containers', c.id, false)}
+						onclick={(e) => app.rowClick(e, key, 'containers', c.id)}
+						onkeydown={(e) => app.rowKey(e, i, key, 'containers', c.id, false)}
 					>
 						<span class="cell"><span class="dot" data-state={dotState}></span></span>
 						<span class="cell proc">
@@ -608,9 +355,9 @@
 						<span class="cell cstatus" class:up={c.running}>{c.status}</span>
 						<span class="cell cports">{c.ports}</span>
 						{@render containerActions(c)}
-						<span class="cell chevcell"><Icon name="chevron" open={isOpen(key)} /></span>
+						<span class="cell chevcell"><Icon name="chevron" open={app.isOpen(key)} /></span>
 					</div>
-					{#if isOpen(key)}{@render logsPanel(key)}{/if}
+					{#if app.isOpen(key)}{@render logsPanel(key)}{/if}
 				{/each}
 			{/if}
 		{/if}
