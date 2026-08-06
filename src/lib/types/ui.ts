@@ -1,3 +1,5 @@
+import type { ContainerInspect } from './docker';
+
 /** The port/process views. */
 export type View = 'tcp' | 'docker';
 
@@ -12,4 +14,11 @@ export type Detail = {
 	loading: boolean;
 	error: string | null;
 	data: Record<string, string | number | null> | null;
+};
+
+/** Lazily-loaded `docker inspect` detail for an expanded container row. */
+export type InspectDetail = {
+	loading: boolean;
+	error: string | null;
+	data: ContainerInspect | null;
 };

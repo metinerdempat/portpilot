@@ -1,5 +1,14 @@
 import { REFRESH_MS } from '$lib/constants';
-import type { ContainerInfo, Detail, DockerPort, PortEntry, Tab, View } from '$lib/types';
+import type {
+	ContainerInfo,
+	ContainerInspect,
+	Detail,
+	DockerPort,
+	InspectDetail,
+	PortEntry,
+	Tab,
+	View
+} from '$lib/types';
 import { formatNow, matchContainer, matchDocker, matchPort, readErrorMessage } from '$lib/utils';
 
 /** The whole app's state + server actions, kept out of the components. */
@@ -25,6 +34,7 @@ class AppStore {
 
 	expanded = $state<string[]>([]);
 	details = $state<Record<string, Detail>>({});
+	inspects = $state<Record<string, InspectDetail>>({});
 
 	error = $state<string | null>(null);
 	autoRefresh = $state(false);
@@ -182,12 +192,8 @@ class AppStore {
 		this.details = { ...this.details, [key]: { loading: true, error: null, data: null } };
 		try {
 			const eid = encodeURIComponent(String(id));
-			const url =
-				kind === 'tcp'
-					? `/api/process?pid=${id}`
-					: kind === 'docker'
-						? `/api/docker/stats?id=${eid}`
-						: `/api/docker/logs?id=${eid}&tail=200`;
+			// tcp → process stats; docker ports → container resource stats.
+			const url = kind === 'tcp' ? `/api/process?pid=${id}` : `/api/docker/stats?id=${eid}`;
 			const res = await fetch(url);
 			if (!res.ok) throw new Error(await readErrorMessage(res));
 			const data = await res.json();
@@ -200,12 +206,34 @@ class AppStore {
 		}
 	};
 
+	/** `docker inspect` metadata (networks, mounts) for an expanded container. */
+	loadInspect = async (key: string, id: string) => {
+		this.inspects = { ...this.inspects, [key]: { loading: true, error: null, data: null } };
+		try {
+			const res = await fetch(`/api/docker/inspect?id=${encodeURIComponent(id)}`);
+			if (!res.ok) throw new Error(await readErrorMessage(res));
+			const data = (await res.json()) as ContainerInspect;
+			this.inspects = { ...this.inspects, [key]: { loading: false, error: null, data } };
+		} catch (e) {
+			this.inspects = {
+				...this.inspects,
+				[key]: {
+					loading: false,
+					error: e instanceof Error ? e.message : 'Failed to inspect the container.',
+					data: null
+				}
+			};
+		}
+	};
+
 	toggleExpand = (key: string, kind: Tab, id: number | string) => {
 		if (this.isOpen(key)) {
 			this.expanded = this.expanded.filter((k) => k !== key);
 		} else {
 			this.expanded = [...this.expanded, key];
-			this.loadDetail(key, kind, id);
+			// Containers load config metadata here; their logs stream live in the panel.
+			if (kind === 'containers') this.loadInspect(key, id as string);
+			else this.loadDetail(key, kind, id);
 		}
 	};
 

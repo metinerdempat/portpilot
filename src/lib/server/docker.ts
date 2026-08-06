@@ -1,12 +1,16 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
 	ContainerAction,
 	ContainerInfo,
+	ContainerInspect,
 	ContainerListing,
 	ContainerStats,
 	DockerListing,
 	DockerPort,
+	MountInfo,
+	NetworkInfo,
 	StopOutcome
 } from '$lib/types';
 
@@ -195,20 +199,64 @@ export const listContainers = async (): Promise<ContainerListing> => {
 	return { available: true, containers };
 }
 
-/** Recent log lines for a container (best-effort tail). */
-export const getContainerLogs = async (id: string, tail = 200): Promise<string | null> => {
+/** Minimal shape of the fields we read out of `docker inspect`'s JSON. */
+type InspectRaw = {
+	Created?: string;
+	RestartCount?: number;
+	Config?: { Cmd?: string[] | string | null };
+	HostConfig?: { RestartPolicy?: { Name?: string } };
+	NetworkSettings?: { Networks?: Record<string, { IPAddress?: string; Gateway?: string }> };
+	Mounts?: Array<{ Type?: string; Source?: string; Destination?: string; RW?: boolean; Name?: string }>;
+};
+
+/** Config-level detail (networks, mounts, restart policy) for one container. */
+export const getContainerInspect = async (id: string): Promise<ContainerInspect | null> => {
+	if (!ID_RE.test(id)) return null;
+	try {
+		const { stdout } = await run('docker', ['inspect', id], { maxBuffer: 4 * 1024 * 1024 });
+		const parsed = JSON.parse(stdout) as InspectRaw[] | InspectRaw;
+		const c = Array.isArray(parsed) ? parsed[0] : parsed;
+		if (!c) return null;
+
+		const networks: NetworkInfo[] = Object.entries(c.NetworkSettings?.Networks ?? {}).map(
+			([name, n]) => ({ name, ip: n?.IPAddress || '—', gateway: n?.Gateway || undefined })
+		);
+		const mounts: MountInfo[] = (c.Mounts ?? []).map((m) => ({
+			type: m.Type ?? 'volume',
+			source: m.Source ?? m.Name ?? '—',
+			destination: m.Destination ?? '—',
+			rw: m.RW !== false,
+			name: m.Name || undefined
+		}));
+		const policy = c.HostConfig?.RestartPolicy?.Name;
+		const cmd = Array.isArray(c.Config?.Cmd) ? c.Config?.Cmd.join(' ') : (c.Config?.Cmd ?? undefined);
+
+		return {
+			networks,
+			mounts,
+			ip: networks.find((n) => n.ip && n.ip !== '—')?.ip,
+			created: c.Created,
+			restartPolicy: policy && policy !== 'no' ? policy : undefined,
+			restartCount: c.RestartCount,
+			cmd: cmd || undefined
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Spawn a following `docker logs -f` process for live streaming. The caller
+ * wires up stdout/stderr and is responsible for killing the child. Returns
+ * null for an invalid id.
+ */
+export const streamContainerLogs = (
+	id: string,
+	tail = 200
+): ChildProcessWithoutNullStreams | null => {
 	if (!ID_RE.test(id)) return null;
 	const n = Number.isInteger(tail) && tail > 0 && tail <= 2000 ? tail : 200;
-	try {
-		const { stdout, stderr } = await run('docker', ['logs', '--tail', String(n), id], {
-			maxBuffer: 4 * 1024 * 1024
-		});
-		return trimLogs((stdout ?? '') + (stderr ?? ''));
-	} catch (err) {
-		const e = err as { stdout?: string; stderr?: string };
-		const raw = (e.stdout ?? '') + (e.stderr ?? '');
-		return raw ? trimLogs(raw) : null;
-	}
+	return spawn('docker', ['logs', '--tail', String(n), '-f', id]);
 }
 
 const parseHealth = (status: string): ContainerInfo['health'] => {
@@ -243,11 +291,8 @@ const compactPublished = (raw: string): string => {
 	return seen.size ? [...seen].join(', ') : '—';
 }
 
-/** Strip ANSI escapes and cap length so a log peek stays lightweight. */
-const trimLogs = (raw: string): string => {
-	const clean = raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-	return clean.length > 20000 ? clean.slice(-20000) : clean;
-}
+/** Remove ANSI color/cursor escape sequences from a log chunk. */
+export const stripAnsi = (raw: string): string => raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 
 const describeError = (err: unknown): string => {
 	const e = err as { code?: string; stderr?: string; message?: string };

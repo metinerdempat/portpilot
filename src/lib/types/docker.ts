@@ -53,3 +53,28 @@ export type ContainerListing = {
 	reason?: string;
 	containers: ContainerInfo[];
 };
+
+export type NetworkInfo = {
+	name: string;
+	ip: string;
+	gateway?: string;
+};
+
+export type MountInfo = {
+	type: string;
+	source: string;
+	destination: string;
+	rw: boolean;
+	name?: string;
+};
+
+/** Config-level detail for one container, from `docker inspect`. */
+export type ContainerInspect = {
+	networks: NetworkInfo[];
+	mounts: MountInfo[];
+	ip?: string;
+	created?: string;
+	restartPolicy?: string;
+	restartCount?: number;
+	cmd?: string;
+};

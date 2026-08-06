@@ -2,9 +2,9 @@
 	import { app } from '$lib/stores';
 	import { SKELETON_DOCKER_WIDTHS } from '$lib/constants';
 	import ContainerActions from './container-actions.svelte';
+	import ContainerDetail from './container-detail.svelte';
 	import Icon from './icon.svelte';
 	import ListRow from './list-row.svelte';
-	import LogsPanel from './logs-panel.svelte';
 	import StatusDot from './status-dot.svelte';
 
 	const cols =
@@ -86,6 +86,6 @@
 				<Icon name="chevron" open={app.isOpen(key)} />
 			</span>
 		</ListRow>
-		{#if app.isOpen(key)}<LogsPanel entryKey={key} />{/if}
+		{#if app.isOpen(key)}<ContainerDetail entryKey={key} id={c.id} />{/if}
 	{/each}
 {/if}
