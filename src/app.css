@@ -1,3 +1,31 @@
+@import 'tailwindcss';
+
+/* Design tokens → Tailwind theme, so `bg-bg`, `text-muted`, `border-border`,
+   `font-mono` etc. resolve to the CSS variables below (and follow dark mode). */
+@theme {
+	--color-bg: var(--bg);
+	--color-panel: var(--panel);
+	--color-hover: var(--hover);
+	--color-selected: var(--selected);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-text: var(--text);
+	--color-muted: var(--muted);
+	--color-faint: var(--faint);
+	--color-accent: var(--accent);
+	--color-danger: var(--danger);
+	--color-danger-strong: var(--danger-strong);
+	--color-warn: var(--warn);
+	--color-ok: var(--ok);
+	--color-tooltip-bg: var(--tooltip-bg);
+	--color-tooltip-fg: var(--tooltip-fg);
+	--color-sk-base: var(--sk-base);
+	--color-sk-hi: var(--sk-hi);
+
+	--font-sans: var(--sans);
+	--font-mono: var(--mono);
+}
+
 :root {
 	color-scheme: light dark;
 
@@ -57,17 +85,6 @@
 	}
 }
 
-* {
-	box-sizing: border-box;
-}
-
-html,
-body {
-	margin: 0;
-	padding: 0;
-	height: 100%;
-}
-
 body {
 	background: var(--bg);
 	color: var(--text);
@@ -79,17 +96,80 @@ body {
 	text-rendering: optimizeLegibility;
 }
 
-button,
-input {
-	font-family: inherit;
-	font-size: inherit;
-	color: inherit;
-}
-
 button {
 	cursor: pointer;
 }
 
 ::selection {
 	background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+/* Animations + a couple of things utilities can't express cleanly. */
+@keyframes pulse-ring {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+	}
+	70%,
+	100% {
+		box-shadow: 0 0 0 5px transparent;
+	}
+}
+@keyframes shimmer {
+	0% {
+		background-position: 100% 50%;
+	}
+	100% {
+		background-position: 0 50%;
+	}
+}
+@keyframes detail-fade {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+/* Tooltip bubble — pseudo-element content can't be a utility. */
+[data-tip] {
+	position: relative;
+}
+[data-tip]::after {
+	content: attr(data-tip);
+	position: absolute;
+	bottom: calc(100% + 6px);
+	right: 0;
+	padding: 0.26rem 0.44rem;
+	border-radius: 5px;
+	background: var(--tooltip-bg);
+	color: var(--tooltip-fg);
+	font-family: var(--sans);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 1.2;
+	white-space: nowrap;
+	opacity: 0;
+	transform: translateY(3px);
+	pointer-events: none;
+	transition:
+		opacity 0.12s ease,
+		transform 0.12s ease;
+	z-index: 40;
+	box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+	opacity: 1;
+	transform: translateY(0);
+}
+[data-tip].tip-left::after {
+	right: auto;
+	left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-tip]::after {
+		transition: none;
+	}
 }
