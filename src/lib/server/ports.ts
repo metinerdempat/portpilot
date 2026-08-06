@@ -1,43 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { PRIVILEGED_PORT_MAX, SYSTEM_COMMANDS } from '$lib/constants';
+import type { KillOutcome, PortEntry, Risk } from '$lib/types';
 
 const run = promisify(execFile);
-
-export type Risk = 'safe' | 'caution' | 'system';
-
-export interface PortEntry {
-	/** The TCP port being listened on, e.g. 3000. */
-	port: number;
-	/** Process id that owns the socket. */
-	pid: number;
-	/** Executable / command name, e.g. "node". */
-	command: string;
-	/** Login name of the owning user. */
-	user: string;
-	/** Bind address, e.g. "*", "127.0.0.1", "::1". */
-	address: string;
-	protocol: 'TCP';
-	/** How risky it is to kill this process. */
-	risk: Risk;
-	/** Short reason shown to the user when risk is not "safe". */
-	riskNote?: string;
-}
-
-/**
- * Processes that are risky to kill — doing so can destabilise the OS or take
- * down a shared service. Names are matched against `lsof +c0` output, which is
- * the full, untruncated command name.
- */
-const SYSTEM_COMMANDS = new Set([
-	// macOS
-	'launchd', 'ControlCenter', 'rapportd', 'sharingd', 'mDNSResponder',
-	'AirPlayXPCHelper', 'identityservicesd', 'apsd', 'nsurlsessiond', 'cloudd',
-	'remoted', 'SystemUIServer', 'WindowServer', 'coreaudiod', 'trustd',
-	'searchpartyd', 'Spotlight', 'mds', 'mds_stores',
-	// linux / cross-platform daemons
-	'systemd', 'sshd', 'cupsd', 'cups-browsed', 'avahi-daemon', 'rpcbind',
-	'netbiosd', 'dnsmasq'
-]);
 
 const CURRENT_USER = process.env.USER ?? process.env.LOGNAME ?? '';
 
@@ -49,7 +15,7 @@ function assessRisk(command: string, user: string, port: number): { risk: Risk; 
 	if (user === 'root') {
 		return { risk: 'caution', note: 'Owned by root — likely a system service (needs sudo to kill).' };
 	}
-	if (port < 1024) {
+	if (port < PRIVILEGED_PORT_MAX) {
 		return { risk: 'caution', note: 'Privileged port (<1024) — usually a system/service port.' };
 	}
 	if (CURRENT_USER && user && user !== CURRENT_USER) {
@@ -152,10 +118,6 @@ function parseName(name: string): { address: string; port: number } | null {
 	const address = name.slice(0, idx).replace(/^\[/, '').replace(/\]$/, '');
 	return { address, port };
 }
-
-export type KillOutcome =
-	| { ok: true }
-	| { ok: false; reason: 'invalid' | 'not-found' | 'forbidden' | 'unknown'; message: string };
 
 /**
  * Send a termination signal to a process.

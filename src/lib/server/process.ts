@@ -1,23 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { ProcessInfo } from '$lib/types';
 
 const run = promisify(execFile);
-
-export interface ProcessInfo {
-	pid: number;
-	/** Parent process id. */
-	ppid: number | null;
-	/** CPU usage percentage. */
-	cpu: number;
-	/** Memory usage percentage. */
-	mem: number;
-	/** Resident memory in MB. */
-	rssMb: number;
-	/** Elapsed running time, e.g. "01:23:45" or "2-03:04:05". */
-	uptime: string;
-	/** Full command line (executable path + args). */
-	command: string;
-}
 
 /**
  * Resource usage + technical details for a single process, via `ps`.

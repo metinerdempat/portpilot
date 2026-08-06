@@ -1,28 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { DockerPort, PortEntry, View } from '$lib/types';
+	import { REFRESH_MS, SKELETON_DOCKER_WIDTHS, SKELETON_TCP_WIDTHS } from '$lib/constants';
+	import { formatNow, readErrorMessage, scopeLabel } from '$lib/utils';
 
-	interface PortEntry {
-		port: number;
-		pid: number;
-		command: string;
-		user: string;
-		address: string;
-		protocol: string;
-		risk: 'safe' | 'caution' | 'system';
-		riskNote?: string;
-	}
-
-	interface DockerPort {
-		hostPort: number;
-		containerPort: number;
-		protocol: string;
-		address: string;
-		container: string;
-		image: string;
-		containerId: string;
-	}
-
-	type View = 'tcp' | 'docker';
 	type Detail = {
 		loading: boolean;
 		error: string | null;
@@ -55,56 +36,13 @@
 	let autoRefresh = $state(false);
 	let updatedAt = $state('');
 
-	const hints: Record<number, string> = {
-		3000: 'Next.js · Node',
-		3001: 'Node',
-		4000: 'Node · Phoenix',
-		4200: 'Angular',
-		5000: 'Flask · Node',
-		5173: 'Vite',
-		5174: 'Vite',
-		5432: 'PostgreSQL',
-		5433: 'PostgreSQL',
-		6379: 'Redis',
-		8000: 'Django · HTTP',
-		8080: 'HTTP · proxy',
-		8081: 'HTTP',
-		8888: 'Jupyter',
-		9000: 'PHP-FPM · MinIO',
-		3306: 'MySQL',
-		11434: 'Ollama',
-		27017: 'MongoDB',
-		9200: 'Elasticsearch',
-		1433: 'SQL Server'
-	};
-
-	function scope(address: string): string {
-		if (address === '127.0.0.1' || address === '::1') return 'localhost only';
-		if (address === '*' || address === '0.0.0.0' || address === '::') return 'exposed';
-		return address;
-	}
-
-	function stamp() {
-		updatedAt = new Date().toLocaleTimeString('en-GB');
-	}
-
-	async function readError(res: Response): Promise<string> {
-		try {
-			const data = await res.json();
-			if (data && typeof data.message === 'string') return data.message;
-		} catch {
-			/* not JSON */
-		}
-		return `Unexpected error (${res.status})`;
-	}
-
 	async function loadPorts() {
 		try {
 			const res = await fetch('/api/ports');
-			if (!res.ok) throw new Error(await readError(res));
+			if (!res.ok) throw new Error(await readErrorMessage(res));
 			ports = (await res.json()).ports;
 			error = null;
-			stamp();
+			updatedAt = formatNow();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to read ports.';
 		} finally {
@@ -115,13 +53,13 @@
 	async function loadDocker() {
 		try {
 			const res = await fetch('/api/docker');
-			if (!res.ok) throw new Error(await readError(res));
+			if (!res.ok) throw new Error(await readErrorMessage(res));
 			const data = await res.json();
 			dockerAvailable = data.available;
 			dockerReason = data.reason ?? null;
 			dports = data.ports;
 			error = null;
-			stamp();
+			updatedAt = formatNow();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to read Docker.';
 		} finally {
@@ -151,7 +89,7 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ pid, force })
 			});
-			if (!res.ok) throw new Error(await readError(res));
+			if (!res.ok) throw new Error(await readErrorMessage(res));
 			confirming = null;
 			await loadPorts();
 		} catch (e) {
@@ -169,7 +107,7 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ id })
 			});
-			if (!res.ok) throw new Error(await readError(res));
+			if (!res.ok) throw new Error(await readErrorMessage(res));
 			dconfirming = null;
 			await loadDocker();
 		} catch (e) {
@@ -177,6 +115,20 @@
 		} finally {
 			stopping = null;
 		}
+	}
+
+	// ---- action helpers, shared by both views ----
+	function beginAction(kind: View, id: number | string) {
+		if (kind === 'tcp') confirming = id as number;
+		else dconfirming = id as string;
+	}
+	function cancelAction(kind: View) {
+		if (kind === 'tcp') confirming = null;
+		else dconfirming = null;
+	}
+	function confirmAction(kind: View, id: number | string) {
+		if (kind === 'tcp') kill(id as number);
+		else stopContainer(id as string);
 	}
 
 	// ---- expand / detail ----
@@ -192,7 +144,7 @@
 					? `/api/process?pid=${id}`
 					: `/api/docker/stats?id=${encodeURIComponent(String(id))}`;
 			const res = await fetch(url);
-			if (!res.ok) throw new Error(await readError(res));
+			if (!res.ok) throw new Error(await readErrorMessage(res));
 			const data = await res.json();
 			details = { ...details, [key]: { loading: false, error: null, data } };
 		} catch (e) {
@@ -212,9 +164,7 @@
 		}
 	}
 
-	// Row click is a mouse convenience; clicks on any inner button (chevron or
-	// the action buttons) are left to that button. Keyboard users reach the
-	// accessible chevron button instead.
+	// Row click is a mouse convenience; clicks on inner buttons are theirs.
 	function onRowClick(e: MouseEvent, key: string, kind: View, id: number | string) {
 		if ((e.target as HTMLElement).closest('button')) return;
 		toggleExpand(key, kind, id);
@@ -233,7 +183,7 @@
 	// Poll the active view while auto-refresh is on.
 	$effect(() => {
 		if (!autoRefresh) return;
-		const id = setInterval(refresh, 3000);
+		const id = setInterval(refresh, REFRESH_MS);
 		return () => clearInterval(id);
 	});
 </script>
@@ -261,6 +211,62 @@
 	<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
 		<path d="M6 6l12 12M18 6L6 18" />
 	</svg>
+{/snippet}
+
+{#snippet lockIcon()}
+	<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="5" y="11" width="14" height="9" rx="2" />
+		<path d="M8 11V8a4 4 0 0 1 8 0v3" />
+	</svg>
+{/snippet}
+
+{#snippet actionCell(a: { kind: View; id: number | string; locked: boolean })}
+	{@const active = a.kind === 'tcp' ? confirming === a.id : dconfirming === a.id}
+	{@const busy = a.kind === 'tcp' ? killing === a.id : stopping === a.id}
+	<span class="action" role="cell">
+		{#if a.locked}
+			<span
+				class="act act-locked"
+				role="img"
+				aria-label="Protected system process"
+				data-tooltip="Protected system process — can’t be killed here"
+			>
+				{@render lockIcon()}
+			</span>
+		{:else if active}
+			<span class="confirm">
+				<button class="act-yes" onclick={() => confirmAction(a.kind, a.id)} disabled={busy}>
+					{busy ? '…' : a.kind === 'tcp' ? 'Kill' : 'Stop'}
+				</button>
+				{#if a.kind === 'tcp'}
+					<button
+						class="act-force"
+						onclick={() => kill(a.id as number, true)}
+						disabled={busy}
+						data-tooltip="Force kill — SIGKILL">force</button
+					>
+				{/if}
+				<button
+					class="act-cancel"
+					onclick={() => cancelAction(a.kind)}
+					disabled={busy}
+					aria-label="Cancel"
+					data-tooltip="Cancel"
+				>
+					{@render xIcon()}
+				</button>
+			</span>
+		{:else}
+			<button
+				class="act act-danger"
+				onclick={() => beginAction(a.kind, a.id)}
+				aria-label={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}
+				data-tooltip={a.kind === 'tcp' ? 'Kill port' : 'Stop container'}
+			>
+				{#if a.kind === 'tcp'}{@render powerIcon()}{:else}{@render stopIcon()}{/if}
+			</button>
+		{/if}
+	</span>
 {/snippet}
 
 {#snippet detail(key: string, kind: View)}
@@ -371,7 +377,7 @@
 					<span class="col-user">User</span>
 					<span></span>
 				</div>
-				{#each [46, 58, 40, 64, 50, 42, 60, 48] as w (w)}
+				{#each SKELETON_TCP_WIDTHS as w (w)}
 					<div class="row row-tcp sk-row" aria-hidden="true">
 						<span></span>
 						<span><span class="sk sk-lg" style="width: 40px"></span></span>
@@ -415,8 +421,7 @@
 
 						<span class="proc" role="cell">
 							<span class="cmd">{p.command || '—'}</span>
-							{#if hints[p.port]}<span class="hint">{hints[p.port]}</span>{/if}
-							<span class="addr">{scope(p.address)}</span>
+							<span class="addr">{scopeLabel(p.address)}</span>
 							{#if p.risk !== 'safe'}
 								<span class="risk-tag risk-{p.risk}" title={p.riskNote}>
 									{p.risk === 'system' ? 'system' : 'caution'}
@@ -427,39 +432,7 @@
 						<span class="num pid" role="cell">{p.pid}</span>
 						<span class="col-user user" role="cell">{p.user}</span>
 
-						<span class="action" role="cell">
-							{#if confirming === p.pid}
-								<span class="confirm">
-									<button class="act-yes" onclick={() => kill(p.pid)} disabled={killing === p.pid}>
-										{killing === p.pid ? '…' : 'Kill'}
-									</button>
-									<button
-										class="act-force"
-										onclick={() => kill(p.pid, true)}
-										disabled={killing === p.pid}
-										title="SIGKILL — immediate & forced">force</button
-									>
-									<button
-										class="act-cancel"
-										onclick={() => (confirming = null)}
-										disabled={killing === p.pid}
-										aria-label="Cancel"
-										title="Cancel"
-									>
-										{@render xIcon()}
-									</button>
-								</span>
-							{:else}
-								<button
-									class="act act-danger"
-									onclick={() => (confirming = p.pid)}
-									aria-label="Kill port"
-									title="Kill port (terminate the process)"
-								>
-									{@render powerIcon()}
-								</button>
-							{/if}
-						</span>
+						{@render actionCell({ kind: 'tcp', id: p.pid, locked: p.risk === 'system' })}
 					</div>
 					{#if isOpen(key)}
 						{@render detail(key, 'tcp')}
@@ -476,7 +449,7 @@
 				<span class="num inner">Internal</span>
 				<span></span>
 			</div>
-			{#each [54, 44, 60, 48, 52] as w (w)}
+			{#each SKELETON_DOCKER_WIDTHS as w (w)}
 				<div class="row row-docker sk-row" aria-hidden="true">
 					<span></span>
 					<span><span class="sk sk-lg" style="width: 40px"></span></span>
@@ -526,43 +499,12 @@
 					<span class="proc" role="cell">
 						<span class="cmd">{d.container}</span>
 						<span class="hint">{d.image}</span>
-						{#if hints[d.hostPort]}<span class="hint dim">{hints[d.hostPort]}</span>{/if}
-						<span class="addr">{scope(d.address)}</span>
+						<span class="addr">{scopeLabel(d.address)}</span>
 					</span>
 
 					<span class="num inner" role="cell">→ {d.containerPort}/{d.protocol}</span>
 
-					<span class="action" role="cell">
-						{#if dconfirming === d.containerId}
-							<span class="confirm">
-								<button
-									class="act-yes"
-									onclick={() => stopContainer(d.containerId)}
-									disabled={stopping === d.containerId}
-								>
-									{stopping === d.containerId ? '…' : 'Stop'}
-								</button>
-								<button
-									class="act-cancel"
-									onclick={() => (dconfirming = null)}
-									disabled={stopping === d.containerId}
-									aria-label="Cancel"
-									title="Cancel"
-								>
-									{@render xIcon()}
-								</button>
-							</span>
-						{:else}
-							<button
-								class="act act-danger"
-								onclick={() => (dconfirming = d.containerId)}
-								aria-label="Stop container"
-								title="Stop container (frees the port)"
-							>
-								{@render stopIcon()}
-							</button>
-						{/if}
-					</span>
+					{@render actionCell({ kind: 'docker', id: d.containerId, locked: false })}
 				</div>
 				{#if isOpen(key)}
 					{@render detail(key, 'docker')}
@@ -707,10 +649,10 @@
 		border-bottom: 1px solid var(--line);
 	}
 	.row-tcp {
-		grid-template-columns: 24px 62px minmax(0, 1fr) 66px 88px 132px;
+		grid-template-columns: 24px 62px minmax(0, 1fr) 66px 88px 150px;
 	}
 	.row-docker {
-		grid-template-columns: 24px 62px minmax(0, 1fr) 116px 118px;
+		grid-template-columns: 24px 62px minmax(0, 1fr) 116px 128px;
 	}
 	.row.head {
 		padding-top: 0.75rem;
@@ -730,6 +672,11 @@
 	.row.open {
 		border-bottom-color: transparent;
 		background: color-mix(in srgb, var(--text) 3.5%, transparent);
+	}
+	.row:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: -2px;
+		border-radius: 4px;
 	}
 
 	/* bigger risk accent bar */
@@ -757,11 +704,6 @@
 	}
 	.row.open .ic-chev {
 		transform: rotate(90deg);
-	}
-	.row:focus-visible {
-		outline: 2px solid var(--focus);
-		outline-offset: -2px;
-		border-radius: 4px;
 	}
 
 	.port {
@@ -801,9 +743,6 @@
 	.hint {
 		font-size: 0.78rem;
 		color: var(--muted);
-	}
-	.hint.dim {
-		color: var(--faint);
 	}
 	.addr {
 		font-size: 0.76rem;
@@ -860,19 +799,24 @@
 		color: var(--danger);
 		background: color-mix(in srgb, var(--danger) 11%, transparent);
 	}
+	.act-locked {
+		cursor: not-allowed;
+	}
 	.confirm {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.4rem;
+		flex-wrap: nowrap;
 	}
 	.act-yes {
 		border: none;
 		background: var(--danger);
 		color: #fff;
 		border-radius: 6px;
-		padding: 0.34rem 0.7rem;
+		padding: 0.34rem 0.72rem;
 		font-size: 0.82rem;
 		font-weight: 500;
+		white-space: nowrap;
 		transition: background 0.15s, opacity 0.15s;
 	}
 	.act-yes:hover:not(:disabled) {
@@ -886,10 +830,10 @@
 		border: none;
 		background: none;
 		color: var(--faint);
-		font-size: 0.72rem;
-		text-decoration: underline;
-		text-underline-offset: 2px;
-		padding: 2px;
+		font-size: 0.75rem;
+		padding: 2px 3px;
+		white-space: nowrap;
+		transition: color 0.15s;
 	}
 	.act-force:hover:not(:disabled) {
 		color: var(--danger);
@@ -902,8 +846,8 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 26px;
-		height: 26px;
+		width: 28px;
+		height: 28px;
 		border: none;
 		background: none;
 		border-radius: 6px;
@@ -914,6 +858,38 @@
 	.act-cancel:hover:not(:disabled) {
 		color: var(--text);
 		background: color-mix(in srgb, var(--text) 8%, transparent);
+	}
+
+	/* ---- tooltip ---- */
+	[data-tooltip] {
+		position: relative;
+	}
+	[data-tooltip]::after {
+		content: attr(data-tooltip);
+		position: absolute;
+		bottom: calc(100% + 7px);
+		right: 0;
+		padding: 0.3rem 0.5rem;
+		border-radius: 5px;
+		background: var(--tooltip-bg);
+		color: var(--tooltip-fg);
+		font-size: 0.72rem;
+		font-weight: 500;
+		line-height: 1.2;
+		white-space: nowrap;
+		letter-spacing: 0;
+		text-transform: none;
+		opacity: 0;
+		transform: translateY(3px);
+		pointer-events: none;
+		transition: opacity 0.13s ease, transform 0.13s ease;
+		z-index: 20;
+		box-shadow: 0 4px 14px color-mix(in srgb, #000 20%, transparent);
+	}
+	[data-tooltip]:hover::after,
+	[data-tooltip]:focus-visible::after {
+		opacity: 1;
+		transform: translateY(0);
 	}
 
 	/* ---- detail panel ---- */
@@ -1014,7 +990,8 @@
 	@media (prefers-reduced-motion: reduce) {
 		.sk,
 		.detail,
-		.ic-chev {
+		.ic-chev,
+		[data-tooltip]::after {
 			animation: none;
 			transition: none;
 		}
@@ -1082,10 +1059,10 @@
 
 	@media (max-width: 620px) {
 		.row-tcp {
-			grid-template-columns: 24px 54px minmax(0, 1fr) 118px;
+			grid-template-columns: 24px 54px minmax(0, 1fr) 132px;
 		}
 		.row-docker {
-			grid-template-columns: 24px 54px minmax(0, 1fr) 104px;
+			grid-template-columns: 24px 54px minmax(0, 1fr) 120px;
 		}
 		.col-user,
 		.pid,

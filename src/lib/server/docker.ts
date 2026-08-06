@@ -1,28 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { ContainerStats, DockerListing, DockerPort, StopOutcome } from '$lib/types';
 
 const run = promisify(execFile);
-
-export interface DockerPort {
-	/** Port published on the host machine — the one that actually occupies a slot. */
-	hostPort: number;
-	/** Port inside the container it maps to. */
-	containerPort: number;
-	protocol: string;
-	/** Host bind address, e.g. "0.0.0.0", "::", "127.0.0.1". */
-	address: string;
-	container: string;
-	image: string;
-	containerId: string;
-}
-
-export interface DockerPortListing {
-	/** True when the docker CLI exists and the daemon answered. */
-	available: boolean;
-	/** Set when `available` is false — a short, human explanation. */
-	reason?: string;
-	ports: DockerPort[];
-}
 
 /**
  * List every port that a *running* container publishes to the host, shaped to
@@ -32,7 +12,7 @@ export interface DockerPortListing {
  * `Ports` field carries the published mappings, e.g.
  * "0.0.0.0:5432->5432/tcp, :::5432->5432/tcp".
  */
-export async function listDockerPorts(): Promise<DockerPortListing> {
+export async function listDockerPorts(): Promise<DockerListing> {
 	let stdout = '';
 	try {
 		const res = await run('docker', ['ps', '--no-trunc', '--format', '{{json .}}'], {
@@ -106,21 +86,6 @@ function parsePortField(
 	return out;
 }
 
-export interface ContainerStats {
-	/** CPU usage, e.g. "0.15%". */
-	cpu: string;
-	/** Memory usage, e.g. "45MiB / 2GiB". */
-	mem: string;
-	/** Memory percentage, e.g. "2.2%". */
-	memPerc: string;
-	/** Network I/O, e.g. "1.2kB / 3.4kB". */
-	net: string;
-	/** Block (disk) I/O. */
-	block: string;
-	/** Number of processes/threads in the container. */
-	pids: string;
-}
-
 /** Live resource usage for one container, via `docker stats --no-stream`. */
 export async function getContainerStats(id: string): Promise<ContainerStats | null> {
 	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) return null;
@@ -149,8 +114,6 @@ export async function getContainerStats(id: string): Promise<ContainerStats | nu
 		return null;
 	}
 }
-
-export type StopOutcome = { ok: true } | { ok: false; message: string };
 
 /**
  * Stop the container that publishes a port — the Docker equivalent of killing

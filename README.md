@@ -17,11 +17,10 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 - **Expand any row** for live technical details — a TCP process shows CPU %, resident memory, uptime, parent PID and its full command line; a container shows CPU, memory, network and disk I/O, and process count. Fetched on demand when you open the row.
 - **Docker port map** — every running container's `host → container` port mapping, with image and scope.
 - **Stop a container** — free a Docker-held port straight from the list with `docker stop` (graceful), behind the same confirm step.
-- **Risk warnings** — flags processes that are dangerous to kill (system daemons like `ControlCenter` / `rapportd`, privileged ports below 1024, root- or other-user-owned) with a `system` / `dikkat` marker and a header count, so you don't take down something important by mistake.
+- **Risk warnings** — flags processes that are dangerous to kill with a `system` / `caution` marker, an accent bar and a header count. Known system daemons (`ControlCenter`, `rapportd`, …) are **protected**: the kill action is replaced by a lock so you can't take them down by accident. Privileged ports (below 1024) and root- or other-user-owned processes are marked `caution`.
 - **One-click kill** with an inline confirm step, so nothing dies by accident.
-- **Graceful by default** — the confirm button sends `SIGTERM`; a separate `force (-9)` action sends `SIGKILL` only when you mean it.
-- **Friendly hints** — recognises common ports (`3000 → Next.js`, `5432 → PostgreSQL`, `6379 → Redis`, …).
-- **Auto-refresh** toggle, graceful "Docker not running" handling, light & dark, keyboard-focusable, no external UI dependencies.
+- **Graceful by default** — the confirm button sends `SIGTERM`; a separate `force` action sends `SIGKILL` only when you mean it.
+- **Tooltips** on every action, **auto-refresh** toggle, graceful "Docker not running" handling, light & dark, keyboard-focusable, no external UI dependencies.
 
 ## How it works
 
@@ -77,6 +76,8 @@ portpilot only ever *reads* the port table and *sends signals to processes you a
 ## Tech
 
 SvelteKit · Svelte 5 (runes) · TypeScript · `adapter-node` · zero runtime UI dependencies.
+
+Shared code is kept out of the components: `type`s live in `src/lib/types/`, constants in `src/lib/constants.ts`, framework-free helpers in `src/lib/utils.ts`, and the OS-facing logic in `src/lib/server/`. The kill / stop action is a single reused snippet rather than two copies.
 
 ## License
 
