@@ -68,7 +68,7 @@ export const listDockerPorts = async (): Promise<DockerListing> => {
  * Parse a docker "Ports" string into published host→container mappings.
  * Skips exposed-but-unpublished ports (no "->") and port ranges.
  */
-const parsePortField = (
+export const parsePortField = (
 	raw: string
 ): Array<{ hostPort: number; containerPort: number; protocol: string; address: string }> => {
 	const out: Array<{ hostPort: number; containerPort: number; protocol: string; address: string }> = [];
@@ -257,7 +257,7 @@ export const streamContainerLogs = (
 	return spawn('docker', ['logs', '--tail', String(n), '-f', id]);
 }
 
-const parseHealth = (status: string): ContainerInfo['health'] => {
+export const parseHealth = (status: string): ContainerInfo['health'] => {
 	if (/\(healthy\)/i.test(status)) return 'healthy';
 	if (/\(unhealthy\)/i.test(status)) return 'unhealthy';
 	if (/health: starting/i.test(status)) return 'starting';
@@ -273,7 +273,7 @@ const labelValue = (labels: string, key: string): string | undefined => {
 }
 
 /** Docker "Ports" string → compact "5432, 6379" / "8080→80" published list. */
-const compactPublished = (raw: string): string => {
+export const compactPublished = (raw: string): string => {
 	const seen = new Set<string>();
 	for (const part of raw.split(',')) {
 		const seg = part.trim();
@@ -292,7 +292,7 @@ const compactPublished = (raw: string): string => {
 /** Remove ANSI color/cursor escape sequences from a log chunk. */
 export const stripAnsi = (raw: string): string => raw.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 
-const describeError = (err: unknown): string => {
+export const describeError = (err: unknown): string => {
 	const e = err as { code?: string; stderr?: string; message?: string };
 	if (e.code === 'ENOENT') return 'Docker CLI not found — is it installed?';
 	const stderr = (e.stderr ?? '').toString();

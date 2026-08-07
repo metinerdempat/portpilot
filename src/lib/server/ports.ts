@@ -9,8 +9,14 @@ const run = promisify(execFile);
 
 const CURRENT_USER = process.env.USER ?? process.env.LOGNAME ?? '';
 
-/** Decide how dangerous it is to kill a given listener. */
-const assessRisk = (command: string, user: string, port: number): { risk: Risk; note?: string } => {
+/** Decide how dangerous it is to kill a given listener. `currentUser` is a
+ *  parameter (defaulting to the running user) so the logic stays pure/testable. */
+export const assessRisk = (
+	command: string,
+	user: string,
+	port: number,
+	currentUser: string = CURRENT_USER
+): { risk: Risk; note?: string } => {
 	if (SYSTEM_COMMANDS.has(command)) {
 		return { risk: 'system', note: `${command}: system process — killing it may disrupt the OS or a service.` };
 	}
@@ -20,7 +26,7 @@ const assessRisk = (command: string, user: string, port: number): { risk: Risk; 
 	if (port < PRIVILEGED_PORT_MAX) {
 		return { risk: 'caution', note: 'Privileged port (<1024) — usually a system/service port.' };
 	}
-	if (CURRENT_USER && user && user !== CURRENT_USER) {
+	if (currentUser && user && user !== currentUser) {
 		return { risk: 'caution', note: `Owned by another user (${user}).` };
 	}
 	return { risk: 'safe' };
@@ -195,7 +201,7 @@ const listPortsWindows = async (): Promise<PortEntry[]> => {
 };
 
 /** Parse an lsof name field such as "*:3000", "127.0.0.1:5432" or "[::1]:6379". */
-const parseName = (name: string): { address: string; port: number } | null => {
+export const parseName = (name: string): { address: string; port: number } | null => {
 	const idx = name.lastIndexOf(':');
 	if (idx === -1) return null;
 	const port = Number(name.slice(idx + 1));
