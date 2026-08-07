@@ -1,21 +1,14 @@
 import { json, error } from '@sveltejs/kit';
 import { killByPid } from '$lib/server/ports';
+import { parseInput } from '$lib/server/validate';
+import { killBody } from '$lib/schemas';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request }) => {
-	let body: { pid?: unknown; force?: unknown };
-	try {
-		body = await request.json();
-	} catch {
-		throw error(400, 'Invalid request body.');
-	}
+	const body = await request.json().catch(() => ({}));
+	const { pid, force } = parseInput(killBody, body);
 
-	const pid = Number(body.pid);
-	if (!Number.isInteger(pid)) {
-		throw error(400, 'A valid PID is required.');
-	}
-
-	const outcome = killByPid(pid, Boolean(body.force));
+	const outcome = killByPid(pid, force);
 	if (!outcome.ok) {
 		const status =
 			outcome.reason === 'forbidden'

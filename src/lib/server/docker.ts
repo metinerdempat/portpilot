@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
+import { CONTAINER_ID_RE } from '$lib/constants';
 import type {
 	ContainerAction,
 	ContainerInfo,
@@ -100,7 +101,7 @@ const parsePortField = (
 
 /** Live resource usage for one container, via `docker stats --no-stream`. */
 export const getContainerStats = async (id: string): Promise<ContainerStats | null> => {
-	if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(id)) return null;
+	if (!CONTAINER_ID_RE.test(id)) return null;
 	try {
 		const { stdout } = await run(
 			'docker',
@@ -127,15 +128,12 @@ export const getContainerStats = async (id: string): Promise<ContainerStats | nu
 	}
 }
 
-// execFile uses no shell, but reject ids that could be read as a flag ("-…").
-const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
-
 /**
  * Start, stop or restart a container. `stop` / `restart` are graceful: SIGTERM
  * to the main process, then SIGKILL after a grace period.
  */
 export const containerAction = async (id: string, action: ContainerAction): Promise<StopOutcome> => {
-	if (!ID_RE.test(id)) return { ok: false, message: 'Invalid container id.' };
+	if (!CONTAINER_ID_RE.test(id)) return { ok: false, message: 'Invalid container id.' };
 	if (action !== 'start' && action !== 'stop' && action !== 'restart') {
 		return { ok: false, message: 'Invalid action.' };
 	}
@@ -211,7 +209,7 @@ type InspectRaw = {
 
 /** Config-level detail (networks, mounts, restart policy) for one container. */
 export const getContainerInspect = async (id: string): Promise<ContainerInspect | null> => {
-	if (!ID_RE.test(id)) return null;
+	if (!CONTAINER_ID_RE.test(id)) return null;
 	try {
 		const { stdout } = await run('docker', ['inspect', id], { maxBuffer: 4 * 1024 * 1024 });
 		const parsed = JSON.parse(stdout) as InspectRaw[] | InspectRaw;
@@ -254,7 +252,7 @@ export const streamContainerLogs = (
 	id: string,
 	tail = 200
 ): ChildProcessWithoutNullStreams | null => {
-	if (!ID_RE.test(id)) return null;
+	if (!CONTAINER_ID_RE.test(id)) return null;
 	const n = Number.isInteger(tail) && tail > 0 && tail <= 2000 ? tail : 200;
 	return spawn('docker', ['logs', '--tail', String(n), '-f', id]);
 }

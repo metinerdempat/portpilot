@@ -1,5 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { stripAnsi, streamContainerLogs } from '$lib/server/docker';
+import { parseInput } from '$lib/server/validate';
+import { logStreamQuery } from '$lib/schemas';
 import type { RequestHandler } from './$types';
 
 /**
@@ -10,8 +12,10 @@ import type { RequestHandler } from './$types';
  * client disconnects (request abort / stream cancel).
  */
 export const GET: RequestHandler = ({ url, request }) => {
-	const id = url.searchParams.get('id') ?? '';
-	const tail = Number(url.searchParams.get('tail') ?? '200');
+	const { id, tail } = parseInput(logStreamQuery, {
+		id: url.searchParams.get('id') ?? '',
+		tail: url.searchParams.get('tail')
+	});
 
 	const child = streamContainerLogs(id, tail);
 	if (!child) throw error(400, 'Invalid container id.');
