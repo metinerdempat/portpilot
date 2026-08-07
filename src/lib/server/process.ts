@@ -50,7 +50,8 @@ export const getProcessInfo = async (pid: number): Promise<ProcessInfo | null> =
 		const line = stdout.trim();
 		if (!line) return null;
 
-		const m = line.match(/^(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+		// Leading \s* tolerates ps right-aligning numeric columns (varies by platform).
+		const m = line.match(/^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(.*)$/);
 		if (!m) return null;
 
 		return {

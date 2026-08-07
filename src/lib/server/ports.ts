@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import { PRIVILEGED_PORT_MAX, SYSTEM_COMMANDS } from '$lib/constants';
 import type { KillOutcome, PortEntry, Risk } from '$lib/types';
 import { getProcessStats } from './process';
-import { IS_WINDOWS } from './platform';
+import { IS_LINUX, IS_WINDOWS } from './platform';
 
 const run = promisify(execFile);
 
@@ -62,9 +62,11 @@ export const listPorts = async (): Promise<PortEntry[]> => {
 	} catch (err) {
 		// lsof exits with status 1 when nothing matches — that's an empty list,
 		// not a failure. Any partial stdout it printed is still valid.
-		const e = err as { code?: number; stdout?: string };
+		const e = err as { code?: number | string; stdout?: string };
 		if (e.stdout) stdout = e.stdout;
 		else if (e.code === 1) return [];
+		// lsof isn't installed on this Linux box — fall back to ss (iproute2).
+		else if (IS_LINUX && e.code === 'ENOENT') return listPortsLinux();
 		else throw err;
 	}
 
@@ -199,6 +201,86 @@ const listPortsWindows = async (): Promise<PortEntry[]> => {
 
 	return entries.sort((a, b) => a.port - b.port || a.pid - b.pid);
 };
+
+/**
+ * Linux fallback for when `lsof` isn't installed: `ss` (iproute2) is present on
+ * essentially every modern Linux and lists listening TCP sockets with the
+ * owning process. `ss` doesn't expose the socket's user, so risk falls back to
+ * command + port; CPU / memory / full command are filled in from `ps`.
+ */
+export const listPortsLinux = async (): Promise<PortEntry[]> => {
+	let stdout = '';
+	try {
+		// -t TCP, -l listening, -n numeric, -p show process. No -H (older ss lacks
+		// it); the header line is skipped by the LISTEN-prefix filter in parseSs.
+		stdout = (await run('ss', ['-tlnp'], { maxBuffer: 8 * 1024 * 1024 })).stdout;
+	} catch {
+		return [];
+	}
+
+	const rows = parseSs(stdout);
+	const stats = await getProcessStats(rows.map((r) => r.pid).filter((p) => p > 0));
+
+	const entries = rows.map((r): PortEntry => {
+		const s = stats.get(r.pid);
+		const command = r.command || (s?.command ?? '').split(/\s+/)[0];
+		const { risk, note } = assessRisk(command, '', r.port);
+		return {
+			pid: r.pid,
+			command,
+			user: '',
+			port: r.port,
+			address: r.address,
+			protocol: 'TCP',
+			risk,
+			riskNote: note,
+			cpu: s?.cpu,
+			mem: s?.mem,
+			rssMb: s?.rssMb,
+			fullCommand: s?.command
+		};
+	});
+
+	return entries.sort((a, b) => a.port - b.port || a.pid - b.pid);
+};
+
+/**
+ * Parse `ss -tlnp` output into listening-socket rows. Each data line looks like:
+ *   LISTEN 0 128 127.0.0.1:5432 0.0.0.0:* users:(("postgres",pid=1234,fd=7))
+ * The process column is absent for sockets the current user can't inspect.
+ */
+export const parseSs = (
+	stdout: string
+): Array<{ address: string; port: number; pid: number; command: string }> => {
+	const out: Array<{ address: string; port: number; pid: number; command: string }> = [];
+	const seen = new Set<string>();
+
+	for (const raw of stdout.split('\n')) {
+		const line = raw.trim();
+		if (!/^LISTEN\b/i.test(line)) continue; // skips the header + non-listening rows
+
+		const cols = line.split(/\s+/);
+		const local = cols[3]; // State Recv-Q Send-Q Local-Address:Port …
+		if (!local) continue;
+
+		const li = local.lastIndexOf(':');
+		if (li === -1) continue;
+		const port = Number(local.slice(li + 1));
+		if (!Number.isInteger(port) || port <= 0) continue;
+
+		const address = local.slice(0, li).replace(/^\[/, '').replace(/\]$/, '');
+		const proc = cols.slice(5).join(' ');
+		const pid = Number(proc.match(/pid=(\d+)/)?.[1] ?? 0);
+		const command = proc.match(/"([^"]+)"/)?.[1] ?? '';
+
+		const key = `${pid}:${port}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push({ address, port, pid, command });
+	}
+
+	return out;
+}
 
 /** Parse an lsof name field such as "*:3000", "127.0.0.1:5432" or "[::1]:6379". */
 export const parseName = (name: string): { address: string; port: number } | null => {

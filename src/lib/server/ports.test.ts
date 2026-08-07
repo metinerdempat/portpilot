@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assessRisk, killByPid, parseName } from './ports';
+import { assessRisk, killByPid, parseName, parseSs } from './ports';
 
 describe('assessRisk', () => {
 	it('flags known system commands as system risk', () => {
@@ -55,6 +55,31 @@ describe('parseName', () => {
 	it('returns null for a non-numeric or non-positive port', () => {
 		expect(parseName('host:abc')).toBeNull();
 		expect(parseName('host:0')).toBeNull();
+	});
+});
+
+describe('parseSs', () => {
+	const sample = [
+		'State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process',
+		'LISTEN 0      128    127.0.0.1:5432       0.0.0.0:*         users:(("postgres",pid=1234,fd=7))',
+		'LISTEN 0      511    0.0.0.0:8080         0.0.0.0:*         users:(("node",pid=5678,fd=20))',
+		'LISTEN 0      128    [::1]:6379           [::]:*            users:(("redis-server",pid=91011,fd=6))',
+		'LISTEN 0      128    *:22                 *:*'
+	].join('\n');
+
+	it('skips the header and parses each listening socket', () => {
+		const rows = parseSs(sample);
+		expect(rows).toEqual([
+			{ address: '127.0.0.1', port: 5432, pid: 1234, command: 'postgres' },
+			{ address: '0.0.0.0', port: 8080, pid: 5678, command: 'node' },
+			{ address: '::1', port: 6379, pid: 91011, command: 'redis-server' },
+			{ address: '*', port: 22, pid: 0, command: '' }
+		]);
+	});
+
+	it('returns an empty list for header-only or empty output', () => {
+		expect(parseSs('')).toEqual([]);
+		expect(parseSs('State Recv-Q Send-Q Local Address:Port Peer Address:Port Process')).toEqual([]);
 	});
 });
 
