@@ -14,9 +14,10 @@ const expectEntry = (p: PortEntry) => {
 };
 
 describe('listPorts (integration)', () => {
-	it('returns a well-formed array without throwing', async () => {
-		const ports = await listPorts();
+	it('returns a well-formed listing without throwing', async () => {
+		const { ports, source } = await listPorts();
 		expect(Array.isArray(ports)).toBe(true);
+		expect(['lsof', 'ss', 'netstat']).toContain(source);
 		ports.forEach(expectEntry);
 	});
 });

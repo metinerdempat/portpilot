@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { assessRisk, killByPid, parseName, parseSs } from './ports';
+import {
+	assessRisk,
+	isProtectedProcessName,
+	killByPid,
+	killPort,
+	parseName,
+	parseSs
+} from './ports';
 
 describe('assessRisk', () => {
 	it('flags known system commands as system risk', () => {
@@ -80,6 +87,33 @@ describe('parseSs', () => {
 	it('returns an empty list for header-only or empty output', () => {
 		expect(parseSs('')).toEqual([]);
 		expect(parseSs('State Recv-Q Send-Q Local Address:Port Peer Address:Port Process')).toEqual([]);
+	});
+});
+
+describe('isProtectedProcessName', () => {
+	it('protects OS-critical processes by basename', () => {
+		expect(isProtectedProcessName('launchd')).toBe(true);
+		expect(
+			isProtectedProcessName(
+				'/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter'
+			)
+		).toBe(true);
+		expect(isProtectedProcessName('sshd')).toBe(true);
+		expect(isProtectedProcessName('svchost')).toBe(true);
+	});
+
+	it('leaves ordinary processes killable', () => {
+		expect(isProtectedProcessName('node')).toBe(false);
+		expect(isProtectedProcessName('/usr/local/bin/postgres')).toBe(false);
+		expect(isProtectedProcessName('')).toBe(false);
+		expect(isProtectedProcessName('   ')).toBe(false);
+	});
+});
+
+describe('killPort', () => {
+	it('rejects protected / invalid pids without signalling', async () => {
+		expect(await killPort(1)).toEqual({ ok: false, reason: 'invalid', message: 'Invalid PID.' });
+		expect(await killPort(0)).toEqual({ ok: false, reason: 'invalid', message: 'Invalid PID.' });
 	});
 });
 

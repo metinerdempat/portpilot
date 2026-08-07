@@ -1,5 +1,11 @@
 export type Risk = 'safe' | 'caution' | 'system';
 
+/** Which system tool produced the current TCP port list. */
+export type PortSource = 'lsof' | 'ss' | 'netstat';
+
+/** The TCP port list plus the tool that produced it. */
+export type PortListing = { ports: PortEntry[]; source: PortSource };
+
 export type PortEntry = {
 	port: number;
 	pid: number;

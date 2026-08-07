@@ -1,3 +1,7 @@
+<script lang="ts">
+	import { app } from '$lib/stores';
+</script>
+
 <footer
 	class="sticky bottom-0 flex h-[34px] items-center justify-between gap-4 border-t border-border bg-bg px-[0.85rem] text-[11.5px] text-faint"
 >
@@ -9,5 +13,5 @@
 		<kbd>x</kbd> kill <span class="opacity-50">·</span>
 		<kbd>/</kbd> filter
 	</span>
-	<span class="[&_code]:font-mono"><code>lsof</code> + <code>docker</code></span>
+	<span class="[&_code]:font-mono"><code>{app.portSource}</code> + <code>docker</code></span>
 </footer>

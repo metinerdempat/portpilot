@@ -6,6 +6,7 @@ import type {
 	DockerPort,
 	InspectDetail,
 	PortEntry,
+	PortSource,
 	Tab,
 	View
 } from '$lib/types';
@@ -17,6 +18,8 @@ class AppStore {
 
 	ports = $state<PortEntry[]>([]);
 	portsReady = $state(false);
+	/** The tool that produced the port list — shown in the footer. */
+	portSource = $state<PortSource>('lsof');
 	confirming = $state<number | null>(null);
 	killing = $state<number | null>(null);
 
@@ -63,7 +66,9 @@ class AppStore {
 		try {
 			const res = await fetch('/api/ports');
 			if (!res.ok) throw new Error(await readErrorMessage(res));
-			this.ports = (await res.json()).ports;
+			const data = await res.json();
+			this.ports = data.ports;
+			this.portSource = data.source ?? 'lsof';
 			this.error = null;
 			this.updatedAt = formatNow();
 		} catch (e) {

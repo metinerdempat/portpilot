@@ -34,6 +34,31 @@ const getProcessInfoWindows = async (pid: number): Promise<ProcessInfo | null> =
 };
 
 /**
+ * The command *name* for a pid (executable path on macOS, short comm on Linux,
+ * image name on Windows) — used to protect OS-critical processes from a kill.
+ * Returns '' when it can't be determined.
+ */
+export const getProcessComm = async (pid: number): Promise<string> => {
+	if (!Number.isInteger(pid) || pid <= 0) return '';
+	if (IS_WINDOWS) {
+		try {
+			const { stdout } = await run('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+				maxBuffer: 1024 * 1024
+			});
+			return stdout.match(/^"([^"]*)"/)?.[1]?.replace(/\.exe$/i, '') ?? '';
+		} catch {
+			return '';
+		}
+	}
+	try {
+		const { stdout } = await run('ps', ['-o', 'comm=', '-p', String(pid)], { maxBuffer: 1024 * 1024 });
+		return stdout.trim();
+	} catch {
+		return '';
+	}
+};
+
+/**
  * Resource usage + technical details for a single process, via `ps`.
  * `-o field=` prints the column with no header; `command` is kept last so the
  * remainder of the line (which contains spaces) is captured whole.

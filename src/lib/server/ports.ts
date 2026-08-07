@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { PRIVILEGED_PORT_MAX, SYSTEM_COMMANDS } from '$lib/constants';
-import type { KillOutcome, PortEntry, Risk } from '$lib/types';
-import { getProcessStats } from './process';
+import type { KillOutcome, PortEntry, PortListing, Risk } from '$lib/types';
+import { getProcessComm, getProcessStats } from './process';
 import { IS_LINUX, IS_WINDOWS } from './platform';
 
 const run = promisify(execFile);
@@ -50,8 +50,8 @@ export const assessRisk = (
  *   -sTCP:LISTEN     only sockets in the LISTEN state
  *   -FpcnL           emit the pid, command, name and login fields
  */
-export const listPorts = async (): Promise<PortEntry[]> => {
-	if (IS_WINDOWS) return listPortsWindows();
+export const listPorts = async (): Promise<PortListing> => {
+	if (IS_WINDOWS) return { ports: await listPortsWindows(), source: 'netstat' };
 
 	let stdout = '';
 	try {
@@ -64,9 +64,9 @@ export const listPorts = async (): Promise<PortEntry[]> => {
 		// not a failure. Any partial stdout it printed is still valid.
 		const e = err as { code?: number | string; stdout?: string };
 		if (e.stdout) stdout = e.stdout;
-		else if (e.code === 1) return [];
+		else if (e.code === 1) return { ports: [], source: 'lsof' };
 		// lsof isn't installed on this Linux box — fall back to ss (iproute2).
-		else if (IS_LINUX && e.code === 'ENOENT') return listPortsLinux();
+		else if (IS_LINUX && e.code === 'ENOENT') return { ports: await listPortsLinux(), source: 'ss' };
 		else throw err;
 	}
 
@@ -130,7 +130,7 @@ export const listPorts = async (): Promise<PortEntry[]> => {
 		}
 	}
 
-	return entries.sort((a, b) => a.port - b.port || a.pid - b.pid);
+	return { ports: entries.sort((a, b) => a.port - b.port || a.pid - b.pid), source: 'lsof' };
 }
 
 /**
@@ -322,4 +322,34 @@ export const killByPid = (pid: number, force = false): KillOutcome => {
 		}
 		return { ok: false, reason: 'unknown', message: e.message };
 	}
+}
+
+/**
+ * True when a command name is one of the OS-critical processes we refuse to
+ * kill. Accepts a full path (macOS `ps comm`) or a short name (Linux/Windows)
+ * and matches on the basename against SYSTEM_COMMANDS.
+ */
+export const isProtectedProcessName = (name: string): boolean => {
+	const base = name.trim().split('/').pop() ?? '';
+	return base !== '' && SYSTEM_COMMANDS.has(base);
+}
+
+/**
+ * Kill the process on a port — but refuse OS-critical processes server-side,
+ * even if a request bypasses the UI's lock (defence in depth). Resolves the
+ * command name first, then defers the actual signal to killByPid.
+ */
+export const killPort = async (pid: number, force = false): Promise<KillOutcome> => {
+	if (!Number.isInteger(pid) || pid <= 1) {
+		return { ok: false, reason: 'invalid', message: 'Invalid PID.' };
+	}
+	const comm = await getProcessComm(pid);
+	if (isProtectedProcessName(comm)) {
+		return {
+			ok: false,
+			reason: 'forbidden',
+			message: `Refusing to kill ${comm.split('/').pop()} — protected system process.`
+		};
+	}
+	return killByPid(pid, force);
 }
