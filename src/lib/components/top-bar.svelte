@@ -53,7 +53,7 @@
 	{/if}
 
 	<label
-		class="tip-left inline-flex cursor-pointer select-none items-center gap-[0.32rem] text-xs text-muted"
+		class="tip-below inline-flex cursor-pointer select-none items-center gap-[0.32rem] text-xs text-muted"
 		data-tip="Refresh every 3s"
 	>
 		<input type="checkbox" bind:checked={app.autoRefresh} class="h-[13px] w-[13px] accent-accent" />
@@ -61,7 +61,7 @@
 	</label>
 
 	<button
-		class="tip-left rounded-md border border-border-strong bg-panel px-[0.6rem] py-[0.28rem] text-xs font-medium text-text transition-colors hover:border-muted hover:bg-hover"
+		class="tip-below rounded-md border border-border-strong bg-panel px-[0.6rem] py-[0.28rem] text-xs font-medium text-text transition-colors hover:border-muted hover:bg-hover"
 		onclick={app.refresh}
 		data-tip="Refresh now"
 	>
