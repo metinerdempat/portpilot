@@ -26,6 +26,18 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 - **Graceful by default** — the confirm button sends `SIGTERM`; a separate `force` action sends `SIGKILL` only when you mean it.
 - **Tooltips** on every action, **auto-refresh** toggle, graceful "Docker not running" handling, light & dark, keyboard-focusable, no external UI dependencies.
 
+## Screenshots
+
+**Docker ports** — every running container's published `host → container` mapping, with image and bind scope; copy the `localhost:port` or restart the owner inline:
+
+![The Docker ports view — published host→container port mappings with image and scope, plus copy and restart actions](docs/screenshots/docker.png)
+
+**Containers** — grouped by Compose project, with a row expanded to show `docker inspect` metadata (networks, mounts) and a live `docker logs -f` stream with in-panel search:
+
+![The Containers view — a container expanded to show its networks, mounts and a live streaming log panel](docs/screenshots/containers.png)
+
+> The Docker/Containers shots use a throwaway `shop` demo stack.
+
 ## How it works
 
 ```
