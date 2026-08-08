@@ -64,19 +64,24 @@ For a production build:
 
 ```bash
 pnpm build
-pnpm start        # node build
+pnpm start        # serve.js — binds 127.0.0.1 by default
 ```
 
 ## Platform support
 
-- **macOS / Linux** — ports via `lsof`, process stats via `ps`.
+- **macOS / Linux** — ports via `lsof`, process stats via `ps`. On Linux without `lsof`, it falls back to `ss` (iproute2). The footer shows which tool is in use.
 - **Windows** — ports via `netstat -ano`, process names + memory via `tasklist`; killing works through Node's `process.kill` (mapped to `TerminateProcess`). CPU %, full command line and user aren't surfaced there yet.
 
 Docker works the same everywhere (it shells out to the `docker` CLI). The right implementation is chosen at runtime from `process.platform`.
 
 ## Safety
 
-portpilot only ever *reads* the port table and *sends signals to processes you already have permission to kill*. It refuses `pid ≤ 1`, and if the OS denies a kill (a process owned by another user) it tells you so instead of failing silently. It binds to `localhost`; don't expose the dev server to your network.
+portpilot is a **local-only** tool with no authentication, and it's built to stay that way safely:
+
+- **Local-only, enforced.** Every request must be addressed to a loopback host — a `hooks.server.ts` check rejects any other `Host` header (403), which blocks both LAN peers and DNS-rebinding sites. The production server (`pnpm start`) also binds to `127.0.0.1` by default. Override deliberately with `HOST=0.0.0.0 pnpm start` if you really want LAN access.
+- **Read-mostly.** It *reads* the port/process tables (`lsof`/`ss`/`ps`/`netstat`/`tasklist`) and Docker (`docker ps/inspect/stats/logs`). The only state-changing actions are sending a signal to a process and `docker start/stop/restart` — no `rm`, no `prune`, no volume or data deletion, and it never writes to disk.
+- **Kills are guarded, in depth.** It refuses `pid ≤ 1`; it refuses OS-critical processes (`launchd`, `WindowServer`, `sshd`, `svchost`, …) **server-side**, not just via the UI lock; and the kernel still only lets you signal processes you already own (another user's process returns a clear "permission denied"). The default signal is `SIGTERM` (graceful); `SIGKILL` is a separate, explicit "force".
+- **No shell, validated input.** Commands run via `execFile`/`spawn` (no shell → no injection), and every id/pid is validated with zod before use.
 
 ## Tech
 
