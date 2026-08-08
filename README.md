@@ -6,6 +6,8 @@ It has three switchable views — **TCP ports** (everything listening on your ma
 
 Built as a single [SvelteKit](https://kit.svelte.dev) app: the browser renders the UI, while SvelteKit's server endpoints run `lsof` / `docker` and send the kill signal. One codebase, full-stack.
 
+![portpilot's TCP ports view — a dense, dark, monitor-style list of every listening port with live CPU and memory, bind scope, PID, and a lock on protected system processes](docs/screenshots/tcp.png)
+
 ## Why
 
 Every developer hits this: a dev server crashes but keeps the port, or you forget what's already running on `3000`. The usual fix is a half-remembered `lsof -ti:3000 | xargs kill -9`. portpilot turns that into a readable list you can act on.
