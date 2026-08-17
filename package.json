@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A clean local dashboard for inspecting and killing the TCP ports in use on your machine.",
+  "description": "A fast, keyboard-driven local dashboard for your machine's TCP ports and Docker containers — inspect, kill, stop/restart, tail logs.",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",

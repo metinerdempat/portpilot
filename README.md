@@ -1,10 +1,8 @@
 # portpilot
 
-A clean local dashboard for seeing which TCP ports are in use on your machine — and killing the process behind any of them in one click. No more `Error: listen EADDRINUSE :::3000`.
+**portpilot** is a fast, keyboard-driven local dashboard for everything running on your machine. It lists the **TCP ports** in use and the **Docker containers** behind them side by side — with live CPU and memory — and lets you act right from the list: kill the process on a port, stop / restart a container, or tail its logs. Anything dangerous to touch is locked.
 
-It has three switchable views — **TCP ports** (everything listening on your machine), **Docker ports** (what your running containers publish) and **Containers** (start/stop/restart, live logs, inspect) — all rendered in the same clean, keyboard-driven layout.
-
-Built as a single [SvelteKit](https://kit.svelte.dev) app: the browser renders the UI, while SvelteKit's server endpoints run `lsof` / `docker` and send the kill signal. One codebase, full-stack.
+Three switchable views — **TCP ports**, **Docker ports** and **Containers** (start/stop/restart, live logs, inspect) — all in one clean, dense layout. Built as a single [SvelteKit](https://kit.svelte.dev) app: the browser renders the UI while server endpoints run `lsof` / `ps` / `docker` and send the kill signal. One codebase, full-stack.
 
 ![portpilot's TCP ports view — a dense, dark, monitor-style list of every listening port with live CPU and memory, bind scope, PID, and a lock on protected system processes](docs/screenshots/tcp.png)
 
@@ -68,6 +66,17 @@ The Docker view reads `docker ps --format '{{json .}}'` and parses each containe
 **Live logs use Server-Sent Events, not WebSockets.** The stream is one-way (server → browser), so `/api/docker/logs/stream` returns a `ReadableStream` with `content-type: text/event-stream` that pipes a `docker logs -f` child process, and the client consumes it with the browser's native `EventSource`. It's plain HTTP (no upgrade handshake, proxy-friendly), and the child process is killed the moment the client disconnects — every stream write is guarded so a vanished client can't crash the server.
 
 Each TCP listener is also given a **risk rating** on the server: known system daemons, ports below 1024, and processes owned by `root` or another user are marked `system` / `caution` so the kill action carries a visible warning instead of treating every process as equally safe.
+
+## Engineering notes
+
+A few decisions that went into it:
+
+- **Live logs over SSE, not WebSockets.** The stream is one-way (server → browser), so there's no need for a bidirectional channel — plain HTTP, proxy-friendly, and the `docker logs -f` child is killed the moment the client disconnects.
+- **Local-only is enforced, not assumed.** The app kills processes and controls Docker with no auth, so a `Host`-header check (`hooks.server.ts`) rejects anything but a loopback host — blocking LAN peers and DNS-rebinding sites, which a CORS check alone wouldn't.
+- **Cross-platform without branching everywhere.** POSIX `ps` flags (`pcpu` / `pmem` / `command=`) work on both macOS and Linux; `ss` fills in when `lsof` isn't installed; Windows uses `netstat` + `tasklist`. The right implementation is chosen at runtime from `process.platform`.
+- **System processes are protected on the server, not just in the UI.** The kill endpoint resolves the target's command name and refuses OS-critical processes (`launchd`, `sshd`, `svchost`, …), so a direct API call can't take the machine down.
+- **The OS-facing parsing is isolated and tested.** The `lsof` / `ss` / `docker` output parsers, the zod request schemas and the risk classification are pure functions with unit tests; a Linux-only integration test runs the real `ss` path on the CI Ubuntu runner.
+- **Read-only except two guarded actions.** Everything reads; only signalling a process and `docker start/stop/restart` change state — all through `execFile` (no shell) with validated input, and it never writes to disk.
 
 ## Run it
 
