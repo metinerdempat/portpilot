@@ -4,7 +4,7 @@
 
 Three switchable views — **TCP ports**, **Docker ports** and **Containers** (start/stop/restart, live logs, inspect) — all in one clean, dense layout. Built as a single [SvelteKit](https://kit.svelte.dev) app: the browser renders the UI while server endpoints run `lsof` / `ps` / `docker` and send the kill signal. One codebase, full-stack.
 
-![portpilot's TCP ports view — a dense, dark, monitor-style list of every listening port with live CPU and memory, bind scope, PID, and a lock on protected system processes](docs/screenshots/tcp.png)
+![portpilot in action — filtering to a stack, switching to the Docker containers view, expanding a container for its networks, mounts and a live log stream, then searching the logs](docs/screenshots/demo.gif)
 
 ## Why
 
@@ -26,6 +26,10 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 
 ## Screenshots
 
+**TCP ports** — every listening port with live CPU and memory, bind scope, PID, and a lock on protected system processes:
+
+![The TCP ports view — a dense, dark, monitor-style list of every listening port](docs/screenshots/tcp.png)
+
 **Docker ports** — every running container's published `host → container` mapping, with image and bind scope; copy the `localhost:port` or restart the owner inline:
 
 ![The Docker ports view — published host→container port mappings with image and scope, plus copy and restart actions](docs/screenshots/docker.png)
@@ -34,7 +38,7 @@ Every developer hits this: a dev server crashes but keeps the port, or you forge
 
 ![The Containers view — a container expanded to show its networks, mounts and a live streaming log panel](docs/screenshots/containers.png)
 
-> The Docker/Containers shots use a throwaway `shop` demo stack.
+> The Docker and Containers views — here and in the demo above — use a throwaway `shop` demo stack.
 
 ## How it works
 
