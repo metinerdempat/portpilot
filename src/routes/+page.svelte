@@ -22,7 +22,7 @@
 <svelte:window onkeydown={app.onGlobalKey} />
 
 <svelte:head>
-	<title>portpilot — ports & docker</title>
+	<title>deport — ports & docker</title>
 </svelte:head>
 
 <div class="mx-auto flex min-h-screen max-w-[1040px] flex-col border-x border-border max-[680px]:border-x-0">

@@ -16,7 +16,7 @@
 			class="h-[7px] w-[7px] rounded-full bg-ok motion-safe:animate-[pulse-ring_2.4s_ease-out_infinite]"
 			aria-hidden="true"
 		></span>
-		<span class="font-semibold tracking-[-0.01em]">portpilot</span>
+		<span class="font-semibold tracking-[-0.01em]">deport</span>
 	</div>
 
 	<nav class="ml-1.5 flex gap-px" aria-label="View">

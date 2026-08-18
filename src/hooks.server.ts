@@ -2,7 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import { text } from '@sveltejs/kit';
 
 /**
- * portpilot controls local processes and Docker with **no authentication**, so
+ * deport controls local processes and Docker with **no authentication**, so
  * it must only ever answer requests addressed to a loopback host. Rejecting any
  * other Host header blocks two things a CORS/origin check alone wouldn't:
  *   - a LAN peer, if the server happens to be bound to 0.0.0.0
@@ -19,7 +19,7 @@ export const isLoopbackHost = (host: string | null): boolean => {
 
 export const handle: Handle = async ({ event, resolve }) => {
 	if (!isLoopbackHost(event.request.headers.get('host'))) {
-		return text('portpilot is a local-only tool — reachable only via localhost.', { status: 403 });
+		return text('deport is a local-only tool — reachable only via localhost.', { status: 403 });
 	}
 	return resolve(event);
 };

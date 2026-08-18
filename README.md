@@ -1,14 +1,14 @@
-# portpilot
+# deport
 
-**portpilot** is a fast, keyboard-driven local dashboard for everything running on your machine. It lists the **TCP ports** in use and the **Docker containers** behind them side by side — with live CPU and memory — and lets you act right from the list: kill the process on a port, stop / restart a container, or tail its logs. Anything dangerous to touch is locked.
+**deport** is a fast, keyboard-driven local dashboard for everything running on your machine. It lists the **TCP ports** in use and the **Docker containers** behind them side by side — with live CPU and memory — and lets you act right from the list: kill the process on a port, stop / restart a container, or tail its logs. Anything dangerous to touch is locked.
 
 Three switchable views — **TCP ports**, **Docker ports** and **Containers** (start/stop/restart, live logs, inspect) — all in one clean, dense layout. Built as a single [SvelteKit](https://kit.svelte.dev) app: the browser renders the UI while server endpoints run `lsof` / `ps` / `docker` and send the kill signal. One codebase, full-stack.
 
-![portpilot in action — filtering to a stack, switching to the Docker containers view, expanding a container for its networks, mounts and a live log stream, then searching the logs](docs/screenshots/demo.gif)
+![deport in action — filtering to a stack, switching to the Docker containers view, expanding a container for its networks, mounts and a live log stream, then searching the logs](docs/screenshots/demo.gif)
 
 ## Why
 
-Every developer hits this: a dev server crashes but keeps the port, or you forget what's already running on `3000`. The usual fix is a half-remembered `lsof -ti:3000 | xargs kill -9`. portpilot turns that into a readable list you can act on.
+Every developer hits this: a dev server crashes but keeps the port, or you forget what's already running on `3000`. The usual fix is a half-remembered `lsof -ti:3000 | xargs kill -9`. deport turns that into a readable list you can act on.
 
 ## Features
 
@@ -107,7 +107,7 @@ Docker works the same everywhere (it shells out to the `docker` CLI). The right 
 
 ## Safety
 
-portpilot is a **local-only** tool with no authentication, and it's built to stay that way safely:
+deport is a **local-only** tool with no authentication, and it's built to stay that way safely:
 
 - **Local-only, enforced.** Every request must be addressed to a loopback host — a `hooks.server.ts` check rejects any other `Host` header (403), which blocks both LAN peers and DNS-rebinding sites. The production server (`pnpm start`) also binds to `127.0.0.1` by default. Override deliberately with `HOST=0.0.0.0 pnpm start` if you really want LAN access.
 - **Read-mostly.** It *reads* the port/process tables (`lsof`/`ss`/`ps`/`netstat`/`tasklist`) and Docker (`docker ps/inspect/stats/logs`). The only state-changing actions are sending a signal to a process and `docker start/stop/restart` — no `rm`, no `prune`, no volume or data deletion, and it never writes to disk.
@@ -116,7 +116,7 @@ portpilot is a **local-only** tool with no authentication, and it's built to sta
 
 ## Disclaimer
 
-portpilot is a personal, **vibe-coded** side project — not audited, production-hardened software. It sends real `SIGTERM` / `SIGKILL` signals and starts/stops your Docker containers, actions that can drop unsaved work in whatever you point it at. The safeguards above are best-effort, not guarantees.
+deport is a personal, **vibe-coded** side project — not audited, production-hardened software. It sends real `SIGTERM` / `SIGKILL` signals and starts/stops your Docker containers, actions that can drop unsaved work in whatever you point it at. The safeguards above are best-effort, not guarantees.
 
 **Use it at your own risk and responsibility.** Run it only on your own machine, keep it on `localhost` (the default), and don't aim it at anything you can't afford to interrupt. It's provided *as is*, without warranty of any kind — see the [MIT license](#license).
 

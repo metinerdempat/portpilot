@@ -24,7 +24,7 @@ describe('isLoopbackHost', () => {
 			'0.0.0.0:3000',
 			'example.com',
 			'evil.com:5173',
-			'portpilot.attacker.test',
+			'deport.attacker.test',
 			null,
 			''
 		]) {
